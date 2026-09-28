@@ -41,14 +41,19 @@ it('gives no fallback default to any secret', function (string $envKey) {
     'XERO_CLIENT_SECRET',
     'XERO_WEBHOOK_KEY',
     'XERO_REDIRECT_URI',
-    'XERO_DEFAULT_TAX_TYPE',
+    'XERO_ACCOUNT_CODE',
+    'XERO_TAX_TYPE',
     'XERO_BRANDING_THEME_ID',
 ]);
 
-it('defaults the invoice account code and currency but not the tax type', function () {
+it('ships a currency default but never an account code or tax type', function () {
+    // An account code is meaningless across organisations -- one org's sales
+    // account may be '200', another's '410002-001'. A wrong-but-present default
+    // would post to the wrong ledger account and Xero would accept it happily,
+    // so there is deliberately none.
     $fresh = require __DIR__.'/../../config/xero-bridge.php';
 
-    expect(data_get($fresh, 'connections.default.account_code'))->toBe('200')
+    expect(data_get($fresh, 'connections.default.account_code'))->toBeNull()
         ->and(data_get($fresh, 'connections.default.currency'))->toBe('MYR')
         // Malaysian SST is per LINE: training 8%, education and rental 6%. A
         // connection-wide default would stamp the wrong rate on a recharge.

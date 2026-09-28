@@ -273,11 +273,18 @@ return [
     | BrandingThemeID only where the caller left them out. Named connections
     | inherit from 'default'; an explicit key wins even when set to null.
     |
-    | ACCOUNT CODES AND TAX TYPES DIFFER PER XERO ORGANISATION. A '200' sales
-    | account in one org may be '4000' in another. Discover them per tenant with
+    | ACCOUNT CODES AND TAX TYPES DIFFER PER XERO ORGANISATION, and they are not
+    | interchangeable: one organisation's sales account may be '200', another's
+    | '4000', another's '410002-001'. Discover them per tenant with
     | XeroBridge::connection($key)->settings()->accounts() / ->taxRates().
     |
-    | tax_type has no default on purpose. Malaysian SST is per LINE, not per
+    | account_code and tax_type therefore have NO default. A wrong-but-present
+    | account code is worse than a missing one: Xero accepts the invoice and
+    | posts it to the wrong ledger account, which nobody notices until Finance
+    | reconciles. With no default the package sends no AccountCode and Xero
+    | rejects the invoice with a message naming the problem.
+    |
+    | tax_type is unset for a second reason. Malaysian SST is per LINE, not per
     | invoice -- training is 8% while education and rental/leasing are 6%, so a
     | single invoice can legitimately carry two rates. A connection-wide default
     | would stamp the wrong rate on a venue recharge. Set it only if every line
@@ -288,9 +295,9 @@ return [
     'connections' => [
 
         'default' => [
-            'account_code' => env('XERO_DEFAULT_ACCOUNT_CODE', '200'),
-            'tax_type' => env('XERO_DEFAULT_TAX_TYPE'),
-            'currency' => env('XERO_DEFAULT_CURRENCY', 'MYR'),
+            'account_code' => env('XERO_ACCOUNT_CODE'),
+            'tax_type' => env('XERO_TAX_TYPE'),
+            'currency' => env('XERO_CURRENCY', 'MYR'),
             'branding_theme_id' => env('XERO_BRANDING_THEME_ID'),
         ],
 

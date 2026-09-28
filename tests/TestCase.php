@@ -64,6 +64,10 @@ class TestCase extends Orchestra
         $app['config']->set('xero-bridge.redirect_uri', 'https://example.test/xero/callback');
         $app['config']->set('xero-bridge.webhook_key', 'test-webhook-key');
 
+        // account_code has no shipped default on purpose, so configure it
+        // here exactly as a consuming application must.
+        $app['config']->set('xero-bridge.connections.default.account_code', '200');
+
         $app['config']->set('queue.default', 'sync');
         $app['config']->set('cache.default', 'array');
     }

@@ -292,9 +292,9 @@ Every key, and what breaks if it is wrong.
 | `XERO_HTTP_TIMEOUT` | no | Seconds, default 30. |
 | `XERO_HTTP_RETRIES` | no | **Total** attempts including the first, default 3. |
 | `XERO_LOCK_STORE` | recommended | A cache store that locks across processes. See below. |
-| `XERO_DEFAULT_ACCOUNT_CODE` | no | Default `200`. **Differs per organisation.** |
-| `XERO_DEFAULT_TAX_TYPE` | no | Deliberately unset. See the tax note below. |
-| `XERO_DEFAULT_CURRENCY` | no | Default `MYR`. |
+| `XERO_ACCOUNT_CODE` | to invoice | **No default, on purpose.** Account codes differ per organisation — one org's sales account may be `200`, another's `410002-001`. Discover yours with `settings()->accounts()`. |
+| `XERO_TAX_TYPE` | no | Deliberately unset. See the tax note below. |
+| `XERO_CURRENCY` | no | Default `MYR`. |
 | `XERO_BRANDING_THEME_ID` | no | Per organisation. |
 
 ### `.env.example`
@@ -319,10 +319,11 @@ XERO_WEBHOOK_KEY=
 XERO_LOCK_STORE=redis
 
 # --- Invoice defaults (these differ per Xero organisation) ------------------
-XERO_DEFAULT_ACCOUNT_CODE=200
-XERO_DEFAULT_CURRENCY=MYR
+# No default. Find yours with settings()->accounts() -- e.g. 200, 4000, 410002-001
+XERO_ACCOUNT_CODE=
+XERO_CURRENCY=MYR
 # Leave unset unless every line of every invoice carries the same rate.
-XERO_DEFAULT_TAX_TYPE=
+XERO_TAX_TYPE=
 
 # --- HTTP -------------------------------------------------------------------
 XERO_HTTP_TIMEOUT=30
@@ -429,7 +430,7 @@ $settings->organisation();      // base currency, country, timezone
 >
 > **Malaysian SST is per line, not per invoice**: training is 8%, while education and rental or leasing
 > are 6%. A single invoice that recharges a venue alongside training carries two rates. That is why
-> `XERO_DEFAULT_TAX_TYPE` is unset by default, and why the package never adds a tax type to a line that
+> `XERO_TAX_TYPE` is unset by default, and why the package never adds a tax type to a line that
 > already states one. Set a connection-wide default only if every line of every invoice is genuinely the
 > same rate.
 

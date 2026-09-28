@@ -63,9 +63,9 @@ Each connection carries four optional defaults, configured in `config/xero-bridg
 ```php
 'connections' => [
     'default' => [
-        'account_code'      => env('XERO_DEFAULT_ACCOUNT_CODE', '200'),
-        'tax_type'          => env('XERO_DEFAULT_TAX_TYPE'),        // null on purpose
-        'currency'          => env('XERO_DEFAULT_CURRENCY', 'MYR'),
+        'account_code'      => env('XERO_ACCOUNT_CODE'),
+        'tax_type'          => env('XERO_TAX_TYPE'),        // null on purpose
+        'currency'          => env('XERO_CURRENCY', 'MYR'),
         'branding_theme_id' => env('XERO_BRANDING_THEME_ID'),
     ],
 ],

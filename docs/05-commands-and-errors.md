@@ -43,9 +43,9 @@ Add these to your .env file:
   XERO_REDIRECT_URI=           required - must match the app exactly
   XERO_WEBHOOK_KEY=            optional - only if you use webhooks
   XERO_SCOPES=                 optional - must include offline_access
-  XERO_DEFAULT_ACCOUNT_CODE=   optional - differs per organisation
-  XERO_DEFAULT_TAX_TYPE=       optional - leave unset for per-line tax
-  XERO_DEFAULT_CURRENCY=       optional - defaults to MYR
+  XERO_ACCOUNT_CODE=   optional - differs per organisation
+  XERO_TAX_TYPE=       optional - leave unset for per-line tax
+  XERO_CURRENCY=       optional - defaults to MYR
   XERO_LOCK_STORE=             recommended - redis/memcached/database
 
 Then:

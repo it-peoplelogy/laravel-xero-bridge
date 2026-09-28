@@ -10,6 +10,41 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-28
+
+Renames three configuration keys and removes a dangerous default. Both changes are visible in
+`config/xero-bridge.php`, so this is a minor release rather than a patch — but the upgrade is two
+renames in your environment file and nothing else.
+
+### Changed
+
+- **`XERO_DEFAULT_ACCOUNT_CODE` → `XERO_ACCOUNT_CODE`**, `XERO_DEFAULT_TAX_TYPE` → `XERO_TAX_TYPE`,
+  `XERO_DEFAULT_CURRENCY` → `XERO_CURRENCY`. The old names read as "the default account code" when they
+  actually set values on the connection named `default`, which misled people into thinking a rename of
+  `XERO_DEFAULT_CONNECTION` would move them. `XERO_DEFAULT_CONNECTION` itself is unchanged, because
+  there the word genuinely means "which connection is the default".
+
+  **To upgrade:** rename those three keys wherever you set them. A key left under the old name is
+  silently ignored, so check before deploying.
+
+### Removed
+
+- **The `'200'` default for `account_code`.** It was Xero's demo-company sales account and meaningless
+  anywhere else: one organisation's sales account may be `200`, another's `4000`, another's
+  `410002-001`.
+
+  The danger was that it failed *quietly*. With a default present, an application that never configured
+  an account code still produced invoices — posted to whatever account `200` happens to be in that
+  organisation, or to nothing recognisable — and Xero accepted them. Nobody finds out until Finance
+  reconciles.
+
+  With no default the package sends no `AccountCode`, Xero rejects the invoice, and the resulting
+  `XeroValidationException` names the problem. `XERO_CURRENCY` keeps its `MYR` default, because a wrong
+  currency is visible on the invoice immediately rather than months later in the ledger.
+
+  **To upgrade:** set `XERO_ACCOUNT_CODE` before creating invoices. Find the valid codes for your
+  organisation with `XeroBridge::settings()->accounts()`.
+
 ## [1.0.6] - 2026-09-28
 
 Documentation only.
@@ -192,7 +227,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.6...v1.1.0
 [1.0.6]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.3...v1.0.4

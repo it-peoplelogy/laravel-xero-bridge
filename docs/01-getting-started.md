@@ -322,9 +322,9 @@ where the caller left them out**.
 
 | Key | Default | What breaks if it is wrong |
 |---|---|---|
-| `XERO_DEFAULT_ACCOUNT_CODE` | `200` | **Differs per organisation.** A `200` sales account in one organisation may be `4000` in another; a wrong code fails as a `XeroValidationException` naming it. |
-| `XERO_DEFAULT_TAX_TYPE` | none, on purpose | Malaysian SST is per **line**: training is 8%, education and rental or leasing are 6%. A connection-wide default stamps the wrong rate on a venue recharge. Set it only if every line of every invoice on this connection genuinely carries the same rate. |
-| `XERO_DEFAULT_CURRENCY` | `MYR` | A currency the organisation has not enabled is rejected by Xero. |
+| `XERO_ACCOUNT_CODE` | *(none)* | **No default, deliberately.** Account codes differ per organisation — one org's sales account may be `200`, another's `4000`, another's `410002-001`. A wrong-but-present default would post to the wrong ledger account and Xero would accept it happily; with none set, Xero rejects the invoice with a `XeroValidationException` naming the problem. |
+| `XERO_TAX_TYPE` | none, on purpose | Malaysian SST is per **line**: training is 8%, education and rental or leasing are 6%. A connection-wide default stamps the wrong rate on a venue recharge. Set it only if every line of every invoice on this connection genuinely carries the same rate. |
+| `XERO_CURRENCY` | `MYR` | A currency the organisation has not enabled is rejected by Xero. |
 | `XERO_BRANDING_THEME_ID` | none | Per organisation. A theme ID from another organisation is rejected. |
 
 ### Endpoints
@@ -354,10 +354,11 @@ XERO_WEBHOOK_KEY=
 XERO_LOCK_STORE=redis
 
 # --- Invoice defaults (these differ per Xero organisation) ------------------
-XERO_DEFAULT_ACCOUNT_CODE=200
-XERO_DEFAULT_CURRENCY=MYR
+# No default. Find yours with settings()->accounts() -- e.g. 200, 4000, 410002-001
+XERO_ACCOUNT_CODE=
+XERO_CURRENCY=MYR
 # Leave unset unless every line of every invoice carries the same rate.
-XERO_DEFAULT_TAX_TYPE=
+XERO_TAX_TYPE=
 
 # --- HTTP -------------------------------------------------------------------
 XERO_HTTP_TIMEOUT=30
@@ -496,7 +497,7 @@ $organisation = XeroBridge::settings()->organisation();
 }
 ```
 
-`BaseCurrency` here is the check worth making: if it is not what `XERO_DEFAULT_CURRENCY` says, every
+`BaseCurrency` here is the check worth making: if it is not what `XERO_CURRENCY` says, every
 invoice you create will be in a foreign currency to this organisation.
 
 ### Keep the connection alive
@@ -696,7 +697,7 @@ use Peoplelogy\XeroBridge\Facades\XeroBridge;
 $defaults = XeroBridge::connection('acme')->defaults();
 
 $defaults->accountCode();       // '4000' if the acme block sets it, else '200'
-$defaults->taxType();           // null unless XERO_DEFAULT_TAX_TYPE is set
+$defaults->taxType();           // null unless XERO_TAX_TYPE is set
 $defaults->currency();          // 'MYR'
 $defaults->brandingThemeId();   // null unless configured
 $defaults->all();               // the raw array
@@ -714,9 +715,9 @@ everything.
 // config/xero-bridge.php
 'connections' => [
     'default' => [
-        'account_code' => env('XERO_DEFAULT_ACCOUNT_CODE', '200'),
-        'tax_type' => env('XERO_DEFAULT_TAX_TYPE'),
-        'currency' => env('XERO_DEFAULT_CURRENCY', 'MYR'),
+        'account_code' => env('XERO_ACCOUNT_CODE'),
+        'tax_type' => env('XERO_TAX_TYPE'),
+        'currency' => env('XERO_CURRENCY', 'MYR'),
         'branding_theme_id' => env('XERO_BRANDING_THEME_ID'),
     ],
 

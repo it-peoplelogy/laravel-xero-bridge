@@ -301,7 +301,7 @@ Then the invoice. Note the two keys you did not write — the connection default
   deliberately.
 - **Set `TaxType` per line.** Malaysian SST is per line — training at 8%, education and
   rental at 6% — so one invoice legitimately carries two rates. Leave
-  `XERO_DEFAULT_TAX_TYPE` unset unless every line of every invoice on this connection
+  `XERO_TAX_TYPE` unset unless every line of every invoice on this connection
   carries the same rate. The package will not inject a tax type onto a line that already
   has `TaxType` **or** `TaxAmount`.
 

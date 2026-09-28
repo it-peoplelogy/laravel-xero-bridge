@@ -817,7 +817,7 @@ Identical to `create()`.
   // config/xero-bridge.php
   'connections' => [
       'default' => [
-          'account_code' => env('XERO_DEFAULT_ACCOUNT_CODE', '200'),   // sales, for invoice lines
+          'account_code' => env('XERO_ACCOUNT_CODE'),   // sales, for invoice lines
           'payment_account_code' => env('XERO_PAYMENT_ACCOUNT_CODE'),  // bank, for payments
       ],
   ],
