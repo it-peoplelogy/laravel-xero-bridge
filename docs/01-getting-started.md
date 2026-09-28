@@ -1013,6 +1013,18 @@ into a loud failure instead of a live call to Xero from CI.
 
 ---
 
+## Deploying to a server
+
+Your laptop authenticates to GitHub with your own SSH key; a server does not, so the first
+`composer install` on a new machine fails with `Cloning failed using an ssh key for authentication`
+and a prompt for a token. That is the machine lacking a credential, not a package fault, and it
+happens even when `composer.lock` is committed.
+
+The permanent fix is a read-only **deploy key** on the server, with a token via `COMPOSER_AUTH` as
+the alternative for containers and ephemeral CI. Full steps, including the two ways it still fails
+afterwards, are in the
+[README's deployment section](../README.md#deploying-server-and-ci-authentication).
+
 ## Uninstalling
 
 Removing the package is `composer remove peoplelogy/laravel-xero-bridge`, plus tidying the

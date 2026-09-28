@@ -184,6 +184,89 @@ are live in the application with no reinstall.
 
 ---
 
+## Deploying: server and CI authentication
+
+Your laptop authenticates to GitHub with your own SSH key. **A server does not.** The first
+`composer install` on a new machine therefore fails like this:
+
+```
+Cloning failed using an ssh key for authentication, enter your GitHub credentials to access private repos
+Token (hidden):
+```
+
+That is not a package problem — it is the machine having no credential for a private repository. A token
+typed at that prompt works, but it expires, it is written in plain text under the deploy user's home
+directory, and you repeat the exercise on every machine.
+
+Note this applies **even when `composer.lock` is committed**. The lock pins which commit to install; it
+does not grant access to fetch it.
+
+### Recommended: a read-only deploy key
+
+Best for a long-lived server. No expiry, no token to rotate, scoped to this one repository.
+
+Run as the **deploy user** — the same account that runs `composer`, commonly `ubuntu` or `deploy`, not
+`root`:
+
+```bash
+ssh-keygen -t ed25519 -C "xero-bridge deploy key $(hostname)" -f ~/.ssh/xero_bridge_deploy -N ""
+cat ~/.ssh/xero_bridge_deploy.pub
+```
+
+On GitHub, go to the **repository** (not your account) → **Settings → Deploy keys → Add deploy key**,
+paste the public key, and leave **"Allow write access" unchecked**.
+
+Point SSH at the key, and pre-accept GitHub's host key so an unattended deploy never hangs on a
+first-connection prompt:
+
+```bash
+printf 'Host github.com\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/xero_bridge_deploy\n  IdentitiesOnly yes\n' >> ~/.ssh/config
+chmod 600 ~/.ssh/config
+ssh-keyscan github.com >> ~/.ssh/known_hosts
+```
+
+Verify. A deploy key greets you with the repository name rather than a username:
+
+```bash
+ssh -T git@github.com
+# Hi it-peoplelogy/laravel-xero-bridge! You've successfully authenticated, ...
+```
+
+`composer install` now works with no token.
+
+> **One deploy key, one repository.** GitHub will not accept the same key on a second repository in the
+> same account. If you later add another private package, either generate a second key and give it a
+> `Host` alias in `~/.ssh/config`, or switch to a machine user with read access to the organisation.
+
+> **Run Composer as the user that owns the key.** If deploys run as `root` or `www-data` while the key
+> lives in `/home/ubuntu/.ssh`, SSH will not find it and you will see exactly the same prompt again.
+
+### Alternative: a token, for containers and ephemeral CI
+
+A container or a fresh CI runner has no persistent home directory to hold a key. There, use the HTTPS
+URL, drop the `preferred-install` override (dist downloads work once authenticated), and inject the token
+as a build-time environment variable rather than writing it to disk:
+
+```bash
+COMPOSER_AUTH='{"github-oauth":{"github.com":"YOUR_TOKEN"}}' composer install --no-dev --no-interaction
+```
+
+Use a **fine-grained** personal access token with read-only *Contents*, scoped to this one repository.
+Not a classic `repo` token, which grants write access across every repository you can see.
+
+Tokens expire, so this needs a rotation plan — which is why a deploy key is the better answer for a
+server that will be around for years.
+
+### Checklist for a new machine
+
+1. Deploy key created, added to the repository, write access **not** granted.
+2. `~/.ssh/config` points at it, `~/.ssh/known_hosts` pre-seeded.
+3. `ssh -T git@github.com` names the repository.
+4. Composer runs as the user owning that key.
+5. `composer install` completes without prompting.
+
+---
+
 ## Uninstalling
 
 How much there is to undo depends on how far you got. Work through these in order and stop when you reach

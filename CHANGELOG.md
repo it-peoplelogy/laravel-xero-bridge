@@ -10,6 +10,25 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-09-28
+
+Documentation only.
+
+### Added
+
+- A [deployment section](README.md#deploying-server-and-ci-authentication) covering the failure every
+  consuming team will hit on their first server install — `Cloning failed using an ssh key for
+  authentication`, followed by a prompt for a GitHub token.
+
+  A developer's laptop authenticates to GitHub with their own SSH key; a server does not. This happens
+  even when `composer.lock` is committed, because the lock pins *which commit* to install without
+  granting access to fetch it.
+
+  The section gives a read-only **deploy key** as the durable answer, with a `COMPOSER_AUTH` token for
+  containers and ephemeral CI, plus the two traps that produce the identical prompt afterwards: one
+  deploy key may only ever be attached to one repository across an account, and Composer must run as the
+  user whose home directory holds the key.
+
 ## [1.0.3] - 2026-09-28
 
 Documentation only.
@@ -141,7 +160,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.0...v1.0.1
