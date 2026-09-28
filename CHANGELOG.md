@@ -10,6 +10,24 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+### Fixed
+
+- Laravel 11 compatibility. `testbench.yaml` carried a `laravel: '@testbench'` path alias that only
+  Testbench 10+ resolves; on Testbench 9 it reached Laravel's `PackageManifest` unresolved and failed
+  `composer install` itself.
+- Token expiry was computed with `CarbonImmutable::now()`, which on Carbon 2 keeps test-now state
+  separate from `Carbon`. Applications on Carbon 2 (Laravel 11 only) that froze time in their tests
+  got wrong expiry answers, and `xero-bridge:refresh-tokens` could report a stale token as "still
+  fresh". All clock reads now go through `Support\Clock`, which uses the framework clock.
+
+### Changed
+
+- **Laravel 11 is now best-effort, not fully supported.** It reached end of security support on
+  12 March 2026 and three unfixed advisories affect the whole 11.x line, so Composer will not install
+  it under its default advisory policy. The package still works there and CI still exercises it, but
+  those legs no longer gate the build. See the README. Consumers on Laravel 11 should upgrade to 12
+  or 13.
+
 ## [1.0.0] - 2026-09-28
 
 ### Added

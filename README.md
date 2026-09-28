@@ -16,11 +16,27 @@ through `XeroBridge::request()`.
 
 | | Laravel 11 | Laravel 12 | Laravel 13 |
 |---|---|---|---|
-| **PHP 8.2** | yes | yes | — Laravel 13 requires PHP 8.3+ |
-| **PHP 8.3** | yes | yes | yes |
-| **PHP 8.4** | yes | yes | yes |
+| **PHP 8.2** | best-effort | supported | — Laravel 13 needs PHP 8.3+ |
+| **PHP 8.3** | best-effort | supported | supported |
+| **PHP 8.4** | best-effort | supported | supported |
 
-Every cell except the impossible one is exercised in CI on every push.
+Every cell except the impossible one runs in CI on every push.
+
+> ### ⚠️ Laravel 11 is End of Life
+>
+> Laravel 11 stopped receiving **security** fixes on **12 March 2026**. Three advisories affect the
+> entire 11.x line — including [CVE-2026-48019](https://github.com/advisories/GHSA-5vg9-5847-vvmq), a
+> high-severity CRLF injection in the default email validation rule — and they are fixed only in
+> 12.60.0 / 12.61.1 / 13.10.0 / 13.12.0. They will not be backported, so **Composer refuses to install
+> Laravel 11 unless you disable its advisory policy.**
+>
+> The package still installs and its tests still pass on Laravel 11, and CI keeps running those legs so
+> the compatibility claim is real — but they are non-blocking, and the version is supported on a
+> best-effort basis only.
+>
+> **If you are on Laravel 11, upgrade to 12 or 13.** That is a security fix for your application, not a
+> requirement of this package. Laravel documents an 11 → 12 upgrade as typically a day or less, and
+> describes 12 → 13 as a minor upgrade for most applications.
 
 ---
 
