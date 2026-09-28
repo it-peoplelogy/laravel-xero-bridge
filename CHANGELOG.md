@@ -10,6 +10,24 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-09-28
+
+Documentation only. The repository is now public, so installation no longer needs any authentication.
+
+### Changed
+
+- **Installation is now two steps and needs no credentials.** Add the `repositories` entry, then
+  `composer require`. Roughly 130 lines of private-repository workarounds are gone, because every one of
+  them existed only to get Composer past authentication:
+  - the `"no-api": true` flag on the repository entry
+  - the per-package `preferred-install` override
+  - the whole "Authentication" step (SSH keys versus tokens)
+  - the "Why those two extra settings" explanation
+  - the deployment section on deploy keys and `COMPOSER_AUTH`
+
+  The repository URL is now the HTTPS form. The uninstall steps no longer mention reverting
+  `preferred-install`.
+
 ## [1.0.4] - 2026-09-28
 
 Documentation only.
@@ -160,7 +178,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.1...v1.0.2

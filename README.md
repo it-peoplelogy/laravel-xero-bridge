@@ -58,88 +58,28 @@ Every cell except the impossible one runs in CI on every push.
 
 ### 1. Add the repository
 
-This package is private and is not on Packagist, so Composer has to be told where to find it. Add **both**
-blocks below to the consuming application's `composer.json` — the `repositories` entry and the
-`preferred-install` override. Adding only the first one fails; see
-[Why those two extra settings](#why-those-two-extra-settings).
+The package is not on Packagist, so Composer has to be told where to find it. Add to the consuming
+application's `composer.json`:
 
 ```json
 "repositories": [
     {
         "type": "vcs",
-        "url": "git@github.com:it-peoplelogy/laravel-xero-bridge.git",
-        "no-api": true
+        "url": "https://github.com/it-peoplelogy/laravel-xero-bridge.git"
     }
-],
+]
 ```
 
-```json
-"config": {
-    "preferred-install": {
-        "peoplelogy/laravel-xero-bridge": "source",
-        "*": "dist"
-    }
-}
-```
+`repositories` is a top-level key, alongside `require` and `require-dev`.
 
-`repositories` is a top-level key, alongside `require` and `require-dev`. If your application already has
-a `config` block — most Laravel applications do, with `"preferred-install": "dist"` — replace that one
-line rather than adding a second `config` key.
+The repository is public, so **no authentication is needed** — no SSH key, no token, no deploy key, and
+nothing to configure on a build server.
 
-### 2. Authentication
-
-**SSH — recommended, and nothing is stored.** With the `git@github.com:` URL and `no-api` above, Composer
-shells out to `git` and uses your existing agent. No token, no expiry to manage, no secret on disk.
-Check it works with `ssh -T git@github.com`, which should greet you by username.
-
-**HTTPS token — for build servers with no SSH key.** Use the `https://github.com/...` URL, drop the
-`preferred-install` override, and supply a token as a build-time environment variable:
-
-```bash
-COMPOSER_AUTH='{"github-oauth":{"github.com":"YOUR_TOKEN"}}' composer install
-```
-
-Use a **fine-grained** personal access token with read-only *Contents* scoped to this one repository —
-not a classic `repo` token, which grants write access across the whole organisation. An `auth.json` file
-works too, but it stores the token in plain text, so it must be gitignored and is the weaker option.
-
-### 3. Require a tagged version
+### 2. Require a tagged version
 
 ```bash
 composer require peoplelogy/laravel-xero-bridge:^1.0
 ```
-
-### Why those two extra settings
-
-Both settings exist because this is a **private** repository. Without them you hit two separate failures,
-and neither error message names the real cause.
-
-**`"no-api": true`** stops Composer asking for a GitHub token. Composer's GitHub driver reads repository
-metadata from the **GitHub API** even when the URL is SSH, and the API needs a token for a private
-repository. Without this you get an interactive prompt:
-
-```
-Your GitHub credentials are required to fetch private repository metadata
-You need to provide a GitHub access token.
-```
-
-`no-api` tells Composer to treat it as an ordinary git repository and use SSH for metadata too. The cost
-is that Composer clones to read metadata rather than fetching JSON, which is marginally slower and not
-noticeable for a package this size.
-
-**`preferred-install: source`** stops the download failing. Even with `no-api`, the `dist` URL recorded
-for the package is a GitHub API zipball, which also needs a token — and GitHub answers **404**, not 403,
-for an unauthorised private resource:
-
-```
-Failed to download peoplelogy/laravel-xero-bridge from dist: ...zipball/... (HTTP/2 404)
-Source fallback is disabled. Not trying alternative sources.
-```
-
-That last line is the giveaway: applications that set `"preferred-install": "dist"` forbid Composer from
-falling back to a git clone. The per-package override says *clone this one over SSH, keep using fast dist
-archives for everything else*. Installing from source means `vendor/peoplelogy/laravel-xero-bridge`
-contains a `.git` directory, which is harmless.
 
 > ### ⚠️ Tagged releases are mandatory
 >
@@ -150,7 +90,7 @@ contains a `.git` directory, which is harmless.
 > If you need an unreleased commit, cut a pre-release tag (`v1.1.0-beta.1`) and require `^1.1@beta`.
 > That scopes the relaxation to one package, instead of loosening `minimum-stability` application-wide.
 
-### 4. Publish and migrate
+### 3. Publish and migrate
 
 ```bash
 php artisan xero-bridge:install
@@ -164,7 +104,7 @@ The migration creates a table called `xero_connections` using a **bare** name, s
 database connection sets is applied automatically — in PIPS it becomes `pips_xero_connections`. Do not
 add a prefix yourself.
 
-### 5. Working on the package and an application together
+### 4. Working on the package and an application together
 
 ```json
 "repositories": [
@@ -184,89 +124,6 @@ are live in the application with no reinstall.
 
 ---
 
-## Deploying: server and CI authentication
-
-Your laptop authenticates to GitHub with your own SSH key. **A server does not.** The first
-`composer install` on a new machine therefore fails like this:
-
-```
-Cloning failed using an ssh key for authentication, enter your GitHub credentials to access private repos
-Token (hidden):
-```
-
-That is not a package problem — it is the machine having no credential for a private repository. A token
-typed at that prompt works, but it expires, it is written in plain text under the deploy user's home
-directory, and you repeat the exercise on every machine.
-
-Note this applies **even when `composer.lock` is committed**. The lock pins which commit to install; it
-does not grant access to fetch it.
-
-### Recommended: a read-only deploy key
-
-Best for a long-lived server. No expiry, no token to rotate, scoped to this one repository.
-
-Run as the **deploy user** — the same account that runs `composer`, commonly `ubuntu` or `deploy`, not
-`root`:
-
-```bash
-ssh-keygen -t ed25519 -C "xero-bridge deploy key $(hostname)" -f ~/.ssh/xero_bridge_deploy -N ""
-cat ~/.ssh/xero_bridge_deploy.pub
-```
-
-On GitHub, go to the **repository** (not your account) → **Settings → Deploy keys → Add deploy key**,
-paste the public key, and leave **"Allow write access" unchecked**.
-
-Point SSH at the key, and pre-accept GitHub's host key so an unattended deploy never hangs on a
-first-connection prompt:
-
-```bash
-printf 'Host github.com\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/xero_bridge_deploy\n  IdentitiesOnly yes\n' >> ~/.ssh/config
-chmod 600 ~/.ssh/config
-ssh-keyscan github.com >> ~/.ssh/known_hosts
-```
-
-Verify. A deploy key greets you with the repository name rather than a username:
-
-```bash
-ssh -T git@github.com
-# Hi it-peoplelogy/laravel-xero-bridge! You've successfully authenticated, ...
-```
-
-`composer install` now works with no token.
-
-> **One deploy key, one repository.** GitHub will not accept the same key on a second repository in the
-> same account. If you later add another private package, either generate a second key and give it a
-> `Host` alias in `~/.ssh/config`, or switch to a machine user with read access to the organisation.
-
-> **Run Composer as the user that owns the key.** If deploys run as `root` or `www-data` while the key
-> lives in `/home/ubuntu/.ssh`, SSH will not find it and you will see exactly the same prompt again.
-
-### Alternative: a token, for containers and ephemeral CI
-
-A container or a fresh CI runner has no persistent home directory to hold a key. There, use the HTTPS
-URL, drop the `preferred-install` override (dist downloads work once authenticated), and inject the token
-as a build-time environment variable rather than writing it to disk:
-
-```bash
-COMPOSER_AUTH='{"github-oauth":{"github.com":"YOUR_TOKEN"}}' composer install --no-dev --no-interaction
-```
-
-Use a **fine-grained** personal access token with read-only *Contents*, scoped to this one repository.
-Not a classic `repo` token, which grants write access across every repository you can see.
-
-Tokens expire, so this needs a rotation plan — which is why a deploy key is the better answer for a
-server that will be around for years.
-
-### Checklist for a new machine
-
-1. Deploy key created, added to the repository, write access **not** granted.
-2. `~/.ssh/config` points at it, `~/.ssh/known_hosts` pre-seeded.
-3. `ssh -T git@github.com` names the repository.
-4. Composer runs as the user owning that key.
-5. `composer install` completes without prompting.
-
----
-
 ## Uninstalling
 
 How much there is to undo depends on how far you got. Work through these in order and stop when you reach
@@ -278,11 +135,8 @@ a step that does not apply.
 composer remove peoplelogy/laravel-xero-bridge
 ```
 
-Then tidy the two things `composer remove` leaves behind in `composer.json`:
-
-1. Delete the `"repositories"` entry for this package.
-2. Revert `"preferred-install"` to plain `"dist"` (or remove the per-package override if you keep other
-   private repositories).
+Then delete the `"repositories"` entry for this package from `composer.json`, which `composer remove`
+leaves behind.
 
 Nothing else exists yet — no published files, no table — so you are done.
 
