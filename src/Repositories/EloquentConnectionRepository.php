@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Peoplelogy\XeroBridge\Repositories;
 
-use Carbon\CarbonImmutable;
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Support\Collection;
 use Peoplelogy\XeroBridge\Contracts\ConnectionRepository;
@@ -13,6 +12,7 @@ use Peoplelogy\XeroBridge\Exceptions\TenantAlreadyConnectedException;
 use Peoplelogy\XeroBridge\Models\XeroConnection;
 use Peoplelogy\XeroBridge\OAuth\TenantInfo;
 use Peoplelogy\XeroBridge\OAuth\TokenResponse;
+use Peoplelogy\XeroBridge\Support\Clock;
 use Peoplelogy\XeroBridge\Support\XeroConfig;
 
 /**
@@ -104,7 +104,7 @@ final class EloquentConnectionRepository implements ConnectionRepository
                 'refresh_token' => (string) $tokens->refreshToken,
                 'expires_at' => $tokens->expiresAt(),
                 'scopes' => $tokens->scope,
-                'last_refreshed_at' => CarbonImmutable::now(),
+                'last_refreshed_at' => Clock::now(),
                 // A successful reconnect clears any previous failure state.
                 'invalidated_at' => null,
                 'invalidated_reason' => null,
@@ -136,7 +136,7 @@ final class EloquentConnectionRepository implements ConnectionRepository
                 : $connection->refresh_token,
             'expires_at' => $tokens->expiresAt(),
             'scopes' => $tokens->scope !== '' ? $tokens->scope : $connection->scopes,
-            'last_refreshed_at' => CarbonImmutable::now(),
+            'last_refreshed_at' => Clock::now(),
             'last_failure_at' => null,
             'failure_count' => 0,
         ])->save();
@@ -149,7 +149,7 @@ final class EloquentConnectionRepository implements ConnectionRepository
         // Counters only. Nothing about the stored tokens changes, and the
         // connection is emphatically NOT invalidated.
         $connection->forceFill([
-            'last_failure_at' => CarbonImmutable::now(),
+            'last_failure_at' => Clock::now(),
             'failure_count' => $connection->failure_count + 1,
         ])->save();
 
@@ -159,7 +159,7 @@ final class EloquentConnectionRepository implements ConnectionRepository
     public function markInvalidated(XeroConnection $connection, string $reason): XeroConnection
     {
         $connection->forceFill([
-            'invalidated_at' => CarbonImmutable::now(),
+            'invalidated_at' => Clock::now(),
             'invalidated_reason' => mb_substr($reason, 0, 191),
         ])->save();
 

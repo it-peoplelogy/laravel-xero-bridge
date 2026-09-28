@@ -1,4 +1,12 @@
-laravel: '@testbench'
+# NOTE: deliberately no `laravel: '@testbench'` line here.
+#
+# `workbench:install` writes one, but it is resolved only by Testbench 10+.
+# On Testbench 9 (the Laravel 11 pairing) the alias reaches Laravel's
+# PackageManifest unresolved, which then fails with
+# "The @testbench/bootstrap/cache directory must be present and writable."
+# That breaks `composer install` itself -- via the post-autoload-dump script --
+# so the whole Laravel 11 matrix dies before a single test runs.
+# Omitting the line uses the same default on every supported Testbench major.
 
 providers:
   - Workbench\App\Providers\WorkbenchServiceProvider

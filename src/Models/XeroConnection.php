@@ -7,6 +7,7 @@ namespace Peoplelogy\XeroBridge\Models;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Peoplelogy\XeroBridge\Support\Clock;
 use Peoplelogy\XeroBridge\Support\Scopes;
 
 /**
@@ -103,7 +104,7 @@ class XeroConnection extends Model
             return true;
         }
 
-        return CarbonImmutable::now()->addSeconds($leeway)->greaterThanOrEqualTo($this->expires_at);
+        return Clock::now()->addSeconds($leeway)->greaterThanOrEqualTo($this->expires_at);
     }
 
     public function expiresWithin(int $seconds): bool
@@ -156,6 +157,6 @@ class XeroConnection extends Model
 
     public function scopeExpiringWithin(Builder $query, int $seconds): Builder
     {
-        return $query->where('expires_at', '<=', CarbonImmutable::now()->addSeconds($seconds));
+        return $query->where('expires_at', '<=', Clock::now()->addSeconds($seconds));
     }
 }

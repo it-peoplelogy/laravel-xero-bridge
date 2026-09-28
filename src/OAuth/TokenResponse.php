@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Peoplelogy\XeroBridge\OAuth;
 
 use Carbon\CarbonImmutable;
+use Peoplelogy\XeroBridge\Support\Clock;
 use Peoplelogy\XeroBridge\Support\Scopes;
 
 /**
@@ -45,7 +46,7 @@ final class TokenResponse
 
     public function expiresAt(): CarbonImmutable
     {
-        return CarbonImmutable::now()->addSeconds($this->expiresIn);
+        return Clock::now()->addSeconds($this->expiresIn);
     }
 
     /** @return list<string> */
