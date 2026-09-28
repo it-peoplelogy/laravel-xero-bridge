@@ -1,0 +1,37 @@
+name: phpstan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phpstan:
+    name: Static analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # v4, matching the other repositories in this organisation. The skeleton
+      # ships v7; bump all repositories together rather than drifting.
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          # 8.5 is outside the supported range, so a failure there would be
+          # unactionable. The top of the support window instead.
+          php-version: '8.4'
+          coverage: none
+          ini-values: memory_limit=512M
+
+      - name: Install composer dependencies
+        env:
+          COMPOSER_MEMORY_LIMIT: -1
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Run PHPStan
+        run: vendor/bin/phpstan --error-format=github

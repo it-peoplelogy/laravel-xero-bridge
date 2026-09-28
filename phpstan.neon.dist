@@ -1,0 +1,21 @@
+parameters:
+    level: 5
+    paths:
+        - src
+        - config
+        - database
+    tmpDir: build/phpstan
+    ignoreErrors:
+        # False positive. Larastan resolves "the config directory" against the
+        # running Laravel app's config path, which under Testbench lives inside
+        # vendor/, so it cannot tell that this package's own config/ IS a config
+        # directory. Calling env() there is the correct Laravel pattern and the
+        # only place it is allowed.
+        #
+        # The real guard against env() creeping into runtime code is the arch
+        # test in tests/ArchTest.php, which fails if anything under src/ calls
+        # it -- that is what would actually break, returning null once a
+        # consuming app runs `php artisan config:cache`.
+        -
+            identifier: larastan.noEnvCallsOutsideOfConfig
+            path: config/*.php

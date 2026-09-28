@@ -1,0 +1,83 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Database\Schema\Builder;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        $this->schema()->create($this->table(), function (Blueprint $table) {
+            $table->id();
+
+            // The application-side slot name, e.g. 'default' or 'acme'.
+            $table->string('key', 64)->unique();
+
+            // Xero's tenantId -- the value sent in the Xero-tenant-id header.
+            $table->string('tenant_id', 64)->unique();
+
+            // Xero's CONNECTION id, which is NOT the tenantId. Disconnecting a
+            // single organisation is DELETE /connections/{id} and needs this.
+            // Adding it later would force every tenant to re-authorise just to
+            // backfill it, so it is captured from the first connect.
+            $table->string('connection_id', 64)->nullable()->index();
+
+            // Xero documents this as nullable; never concatenate it directly.
+            $table->string('tenant_name')->nullable();
+
+            $table->string('tenant_type', 32)->default('ORGANISATION');
+
+            $table->string('auth_event_id', 64)->nullable();
+
+            // text, not string: an encrypted Xero JWT is far beyond 255 bytes.
+            $table->text('access_token');
+            $table->text('refresh_token');
+
+            $table->timestamp('expires_at')->nullable()->index();
+
+            // Space-separated scopes AS GRANTED. Load-bearing, not decorative:
+            // scopes are additive and cannot be removed from an existing token,
+            // so this is how you detect a connection that predates a scope
+            // addition and needs re-consent.
+            $table->text('scopes')->nullable();
+
+            $table->timestamp('last_refreshed_at')->nullable();
+
+            // Set ONLY on a terminal invalid_grant. Reversible by reconnecting.
+            // Nothing in this package ever deletes a connection row.
+            $table->timestamp('invalidated_at')->nullable();
+            $table->string('invalidated_reason', 191)->nullable();
+
+            // Transient failures (5xx, timeouts). Never destructive.
+            $table->timestamp('last_failure_at')->nullable();
+            $table->unsignedSmallInteger('failure_count')->default(0);
+
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        $this->schema()->dropIfExists($this->table());
+    }
+
+    /**
+     * Resolve through the configured connection so the HOST's prefix applies.
+     * pips sets prefix 'pips_' with prefix_indexes on its mysql connection, so
+     * this creates pips_xero_connections there and xero_connections elsewhere.
+     * Indexes are deliberately left unnamed for the same reason.
+     */
+    private function schema(): Builder
+    {
+        return Schema::connection(config('xero-bridge.database.connection'));
+    }
+
+    private function table(): string
+    {
+        return config('xero-bridge.database.table', 'xero_connections');
+    }
+};

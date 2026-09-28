@@ -1,0 +1,155 @@
+name: run-tests
+
+# Named branches on push, plus every pull request. The skeleton's version
+# fires on every feature branch, which burns ten jobs a push.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      # false, not true: when the PHP 8.2 leg breaks we need to know whether
+      # 8.3 and 8.4 broke with it. That distinction IS the diagnosis.
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
+        laravel: ['11.*', '12.*', '13.*']
+        include:
+          # The Testbench major is a hard function of the Laravel major.
+          - laravel: '11.*'
+            testbench: '9.*'
+          - laravel: '12.*'
+            testbench: '10.*'
+          - laravel: '13.*'
+            testbench: '11.*'
+        exclude:
+          # IMPOSSIBLE, not merely skipped: laravel/framework v13 declares
+          # "php": "^8.3" and orchestra/testbench v11 declares the same,
+          # independently. No version of either runs on 8.2.
+          - php: '8.2'
+            laravel: '13.*'
+
+    # 3 x 3 - 1 = 8 jobs.
+    name: PHP ${{ matrix.php }} / Laravel ${{ matrix.laravel }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          # Trimmed from the skeleton's list: an HTTP API wrapper needs none
+          # of soap/gd/exif/imagick, and imagick alone costs ~40s per job.
+          # pdo_sqlite and sqlite ARE load-bearing -- the whole suite runs on
+          # in-memory sqlite.
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, intl, fileinfo
+          coverage: none
+          ini-values: memory_limit=512M
+
+      - name: Validate composer.json
+        # Runs BEFORE the matrix pins below mutate it, so it checks what was
+        # actually committed.
+        run: composer validate --strict --no-check-lock
+
+      - name: Guard against committed credentials
+        # Cheap, and the one class of mistake that cannot be un-made once
+        # pushed. A Xero client id is 32 uppercase hex characters.
+        run: |
+          ! grep -rInE '[A-F0-9]{32}|Bearer [A-Za-z0-9._-]{40,}' \
+              --include='*.php' --include='*.json' --include='*.md' --include='*.yml' \
+              src/ tests/ config/ README.md
+
+      - name: Pin the Laravel and Testbench majors for this leg
+        # Without this, a PHP 8.2 runner always resolves the HIGHEST
+        # installable Testbench (10.*, i.e. Laravel 12) and the Laravel 11
+        # column would never actually be tested. --dev keeps laravel/framework
+        # out of the package's own `require`, where it does not belong.
+        run: >
+          composer require --dev
+          "laravel/framework:${{ matrix.laravel }}"
+          "orchestra/testbench:${{ matrix.testbench }}"
+          --no-interaction --no-update
+
+      - name: Install dependencies
+        env:
+          # Resolving three floating Pest majors against three Laravel majors
+          # exceeds the default limit.
+          COMPOSER_MEMORY_LIMIT: -1
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - name: Show what actually resolved
+        # The single most useful line in this log. Expect Pest 3 on the 8.2
+        # legs, Pest 4 on 8.3/8.4 with Laravel 11 or 12, and Pest 5 ONLY on
+        # 8.4 + Laravel 13 -- Pest 5 needs symfony/process ^8.1, which
+        # Laravel 11 and 12 both forbid.
+        run: composer show --direct
+
+      - name: Run tests
+        run: vendor/bin/pest --ci
+
+  lowest:
+    # A separate job rather than a matrix dimension: --prefer-lowest only ever
+    # re-proves the FLOOR of the support window, so running it on all eight
+    # cells would triple CI time for one bit of information.
+    #
+    # This is the leg that catches an under-constrained `require` -- for
+    # example the skeleton's default spatie/laravel-package-tools:^1.16, whose
+    # lowest member cannot support Laravel 13 at all.
+    name: Lowest deps (PHP 8.2 / Laravel 11)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, intl, fileinfo
+          coverage: none
+          ini-values: memory_limit=512M
+
+      - run: >
+          composer require --dev "laravel/framework:11.*" "orchestra/testbench:9.*"
+          --no-interaction --no-update
+
+      - env:
+          COMPOSER_MEMORY_LIMIT: -1
+        run: composer update --prefer-lowest --prefer-dist --no-interaction --no-progress
+
+      - run: composer show --direct
+
+      - run: vendor/bin/pest --ci
+
+  coverage:
+    # CI-only: there is no Xdebug or PCOV on the development machine, so
+    # `composer test-coverage` cannot run locally at all. Gated behind the
+    # matrix so it does not run on an already-red branch.
+    name: Coverage
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, sqlite, pdo_sqlite, bcmath, intl, fileinfo
+          coverage: pcov
+          ini-values: memory_limit=512M
+
+      - env:
+          COMPOSER_MEMORY_LIMIT: -1
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - run: vendor/bin/pest --ci --coverage --min=80

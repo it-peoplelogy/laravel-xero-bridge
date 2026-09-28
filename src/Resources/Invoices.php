@@ -1,0 +1,524 @@
+<?php
+
+declare(strict_types=1);
+
+namespace Peoplelogy\XeroBridge\Resources;
+
+use Illuminate\Support\LazyCollection;
+use Peoplelogy\XeroBridge\Events\InvoiceCreated;
+use Peoplelogy\XeroBridge\Exceptions\InvalidInvoicePayloadException;
+use Peoplelogy\XeroBridge\Exceptions\InvalidInvoiceTransitionException;
+use Peoplelogy\XeroBridge\Exceptions\InvoiceCannotBeVoidedException;
+use Peoplelogy\XeroBridge\Exceptions\UnsafeContactPayloadException;
+use Peoplelogy\XeroBridge\Exceptions\XeroBridgeException;
+use Peoplelogy\XeroBridge\Filters\InvoiceFilter;
+use Peoplelogy\XeroBridge\Support\BatchResult;
+use Peoplelogy\XeroBridge\Support\IdempotencyKey;
+use Peoplelogy\XeroBridge\Support\InvoiceTransitions;
+
+class Invoices extends Resource
+{
+    /** Set for one call by withContactMutation(). */
+    private bool $allowContactMutation = false;
+
+    /** Set for one call by replacingLineItems(). */
+    private bool $allowLineItemReplacement = false;
+
+    protected function endpoint(): string
+    {
+        return 'Invoices';
+    }
+
+    /**
+     * Deliberately opt in to Xero updating the CONTACT RECORD as a side
+     * effect of writing an invoice. Resets after one call.
+     */
+    public function withContactMutation(): static
+    {
+        $this->allowContactMutation = true;
+
+        return $this;
+    }
+
+    /**
+     * Deliberately opt in to Xero deleting and recreating line items on
+     * update. Resets after one call.
+     */
+    public function replacingLineItems(): static
+    {
+        $this->allowLineItemReplacement = true;
+
+        return $this;
+    }
+
+    /**
+     * Create one invoice.
+     *
+     * @param  array<string, mixed>  $invoice
+     * @return array<string, mixed>
+     */
+    public function create(array $invoice, ?string $idempotencyKey = null): array
+    {
+        $invoice = $this->prepare($invoice);
+
+        $key = $idempotencyKey ?? IdempotencyKey::generate();
+        IdempotencyKey::assertValid($key);
+
+        $body = $this->client->post(
+            $this->endpoint(),
+            ['Invoices' => [$invoice]],
+            ['Idempotency-Key' => $key],
+        );
+
+        $created = $this->unwrapFirst($body) ?? [];
+
+        InvoiceCreated::dispatch($this->connectionKey, $created, $key);
+
+        return $created;
+    }
+
+    /**
+     * Create several invoices in one request.
+     *
+     * Sent with summarizeErrors=false, so Xero returns HTTP 200 even when
+     * some items fail and the outcome must be read per element -- hence a
+     * BatchResult rather than a plain array.
+     *
+     * Accepts a keyed array too, hence the array_values() normalisation --
+     * Xero needs a JSON array here, not an object.
+     *
+     * @param  array<array-key, array<string, mixed>>  $invoices
+     */
+    public function createMany(array $invoices, ?string $idempotencyKey = null): BatchResult
+    {
+        $prepared = array_map(fn (array $invoice) => $this->prepare($invoice), array_values($invoices));
+
+        $key = $idempotencyKey ?? IdempotencyKey::generate();
+        IdempotencyKey::assertValid($key);
+
+        $body = $this->client->post(
+            $this->endpoint(),
+            ['Invoices' => $prepared],
+            ['Idempotency-Key' => $key],
+            ['summarizeErrors' => 'false'],
+        );
+
+        $result = BatchResult::make($this->unwrap($body), $prepared);
+
+        // Only the elements Xero actually accepted.
+        foreach (array_merge($result->successful(), $result->warned()) as $invoice) {
+            InvoiceCreated::dispatch($this->connectionKey, $invoice, $key);
+        }
+
+        return $result;
+    }
+
+    /**
+     * Fetch one invoice. Xero accepts either an InvoiceID GUID or a human
+     * InvoiceNumber such as INV-01514.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function find(string $idOrNumber): ?array
+    {
+        $this->assertUsableIdentifier($idOrNumber);
+
+        return $this->unwrapFirst(
+            $this->client->get($this->endpoint().'/'.$this->pathSegment($idOrNumber))
+        );
+    }
+
+    /**
+     * One page of invoices.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function list(?InvoiceFilter $filter = null): array
+    {
+        $filter ??= InvoiceFilter::make();
+
+        return $this->unwrap(
+            $this->client->get($this->endpoint(), $filter->toQuery(), $filter->toHeaders())
+        );
+    }
+
+    /**
+     * Every matching invoice, paged lazily.
+     *
+     * Walks Xero's `pagination` object (page/pageSize/pageCount/itemCount).
+     * Xero's docs say the older "keep fetching until a page comes back short"
+     * approach "is superseded by the pagination object" -- it always costs
+     * one wasted request when the total is an exact multiple of the page
+     * size. The short-page check survives only as a fallback for responses
+     * that carry no pagination object.
+     *
+     * @return LazyCollection<int, array<string, mixed>>
+     */
+    public function all(?InvoiceFilter $filter = null, int $maxPages = 1000): LazyCollection
+    {
+        $filter ??= InvoiceFilter::make();
+
+        return LazyCollection::make(function () use ($filter, $maxPages) {
+            $page = $filter->currentPage() ?? 1;
+            $pageSize = $filter->currentPageSize() ?? 100;
+            $pagesFetched = 0;
+
+            while (true) {
+                $scoped = $filter->forPage($page, $pageSize);
+
+                $body = $this->client->get(
+                    $this->endpoint(),
+                    $scoped->toQuery(),
+                    $scoped->toHeaders(),
+                );
+
+                $items = $this->unwrap($body);
+
+                foreach ($items as $item) {
+                    yield $item;
+                }
+
+                $pagesFetched++;
+
+                if ($pagesFetched >= $maxPages) {
+                    throw new XeroBridgeException(
+                        "Stopped paging Xero invoices after {$maxPages} pages. Narrow the filter, "
+                        .'or raise the limit if this many pages is genuinely expected.'
+                    );
+                }
+
+                $pagination = $body['pagination'] ?? null;
+
+                if (is_array($pagination) && isset($pagination['pageCount'])) {
+                    if ($page >= (int) $pagination['pageCount']) {
+                        return;
+                    }
+                } elseif (count($items) < $pageSize) {
+                    // Fallback for a response with no pagination object.
+                    return;
+                }
+
+                if ($items === []) {
+                    return;
+                }
+
+                $page++;
+            }
+        });
+    }
+
+    /**
+     * @param  array<string, mixed>  $invoice
+     * @return array<string, mixed>
+     */
+    public function update(string $idOrNumber, array $invoice): array
+    {
+        $this->assertUsableIdentifier($idOrNumber);
+
+        if (isset($invoice['LineItems']) && ! $this->allowLineItemReplacement) {
+            foreach ((array) $invoice['LineItems'] as $line) {
+                if (! is_array($line) || ! isset($line['LineItemID'])) {
+                    $this->resetGuards();
+
+                    throw InvalidInvoicePayloadException::unsafeLineItems();
+                }
+            }
+        }
+
+        $invoice = $this->guardContact($invoice);
+
+        $body = $this->client->post(
+            $this->endpoint().'/'.$this->pathSegment($idOrNumber),
+            ['Invoices' => [$invoice]],
+        );
+
+        return $this->unwrapFirst($body) ?? [];
+    }
+
+    /** @return array<string, mixed> */
+    public function authorise(string $idOrNumber): array
+    {
+        return $this->transitionTo($idOrNumber, InvoiceTransitions::AUTHORISED);
+    }
+
+    /**
+     * Void an approved invoice.
+     *
+     * Preflights by default: VOIDED is only legal from AUTHORISED and only
+     * while no payment is applied, and Xero's error for the payment case is
+     * opaque.
+     *
+     * @return array<string, mixed>
+     */
+    public function void(string $idOrNumber, bool $preflight = true): array
+    {
+        if ($preflight) {
+            $current = $this->find($idOrNumber);
+
+            if ($current !== null) {
+                $status = (string) ($current['Status'] ?? '');
+
+                if (! InvoiceTransitions::isVoidable($status)) {
+                    throw InvalidInvoiceTransitionException::make(
+                        $idOrNumber, $status, InvoiceTransitions::VOIDED
+                    );
+                }
+
+                $paymentIds = array_values(array_filter(array_map(
+                    static fn ($payment) => is_array($payment) ? ($payment['PaymentID'] ?? null) : null,
+                    (array) ($current['Payments'] ?? []),
+                )));
+
+                if ($paymentIds !== []) {
+                    throw InvoiceCannotBeVoidedException::hasPayments($idOrNumber, $paymentIds);
+                }
+            }
+        }
+
+        return $this->postStatus($idOrNumber, InvoiceTransitions::VOIDED);
+    }
+
+    /**
+     * Delete an invoice.
+     *
+     * Legal from DRAFT *and* SUBMITTED -- not drafts alone. There is no HTTP
+     * DELETE for invoices; this is a status change.
+     *
+     * @return array<string, mixed>
+     */
+    public function delete(string $idOrNumber, bool $preflight = true): array
+    {
+        return $this->transitionTo($idOrNumber, InvoiceTransitions::DELETED, $preflight);
+    }
+
+    /**
+     * Ask Xero to email the invoice.
+     *
+     * Requires Type ACCREC and status SUBMITTED, AUTHORISED or PAID. Returns
+     * 204 No Content. Subject and body come from the organisation's own
+     * template and cannot be set through the API.
+     */
+    public function email(string $idOrNumber): void
+    {
+        $this->assertUsableIdentifier($idOrNumber);
+
+        $this->client->post($this->endpoint().'/'.$this->pathSegment($idOrNumber).'/Email');
+    }
+
+    /** The rendered PDF as raw bytes. */
+    public function pdf(string $idOrNumber): string
+    {
+        $this->assertUsableIdentifier($idOrNumber);
+
+        // Passed as the dedicated $accept argument, not as a header: the
+        // client overwrites Accept on purpose so a stray caller header can
+        // never make Xero answer with XML.
+        $response = $this->client->send(
+            'GET',
+            $this->endpoint().'/'.$this->pathSegment($idOrNumber),
+            [],
+            [],
+            [],
+            'application/pdf',
+        );
+
+        $contentType = strtolower((string) $response->header('Content-Type'));
+
+        if (! str_contains($contentType, 'application/pdf')) {
+            throw new XeroBridgeException(
+                "Asked Xero for a PDF but it returned [{$contentType}]. Nothing will fail until "
+                .'someone opens the file, so this is refused here.'
+            );
+        }
+
+        return $response->body();
+    }
+
+    /** The public "view online" link for the invoice. */
+    public function onlineUrl(string $idOrNumber): string
+    {
+        $this->assertUsableIdentifier($idOrNumber);
+
+        $body = $this->client->get(
+            $this->endpoint().'/'.$this->pathSegment($idOrNumber).'/OnlineInvoice'
+        );
+
+        $url = $body['OnlineInvoices'][0]['OnlineInvoiceUrl'] ?? null;
+
+        if (! is_string($url) || $url === '') {
+            throw new XeroBridgeException(
+                "Xero returned no online invoice URL for [{$idOrNumber}]. Online invoices are "
+                .'only available for approved ACCREC invoices.'
+            );
+        }
+
+        return $url;
+    }
+
+    /** Mark an AUTHORISED invoice as sent, without Xero emailing it. */
+    public function markAsSent(string $idOrNumber): array
+    {
+        $this->assertUsableIdentifier($idOrNumber);
+
+        return $this->unwrapFirst($this->client->post(
+            $this->endpoint().'/'.$this->pathSegment($idOrNumber),
+            ['Invoices' => [['SentToContact' => true]]],
+        )) ?? [];
+    }
+
+    /**
+     * Apply connection defaults and run the safety guards.
+     *
+     * @param  array<string, mixed>  $invoice
+     * @return array<string, mixed>
+     */
+    private function prepare(array $invoice): array
+    {
+        if (! isset($invoice['Type']) || $invoice['Type'] === '') {
+            $this->resetGuards();
+
+            throw InvalidInvoicePayloadException::missingType();
+        }
+
+        $invoice = $this->guardContact($invoice);
+
+        return $this->applyDefaults($invoice);
+    }
+
+    /**
+     * @param  array<string, mixed>  $invoice
+     * @return array<string, mixed>
+     */
+    private function guardContact(array $invoice): array
+    {
+        $contact = $invoice['Contact'] ?? null;
+
+        if (! is_array($contact) || ! isset($contact['ContactID'])) {
+            return $invoice;
+        }
+
+        $extra = array_values(array_diff(array_keys($contact), ['ContactID']));
+
+        if ($extra !== [] && ! $this->allowContactMutation) {
+            $this->resetGuards();
+
+            throw UnsafeContactPayloadException::make($extra);
+        }
+
+        return $invoice;
+    }
+
+    /**
+     * Fill in only what the caller left out.
+     *
+     * @param  array<string, mixed>  $invoice
+     * @return array<string, mixed>
+     */
+    private function applyDefaults(array $invoice): array
+    {
+        $accountCode = $this->defaults->accountCode();
+        $taxType = $this->defaults->taxType();
+
+        if (isset($invoice['LineItems']) && is_array($invoice['LineItems'])) {
+            foreach ($invoice['LineItems'] as $index => $line) {
+                if (! is_array($line)) {
+                    continue;
+                }
+
+                if ($accountCode !== null && ! $this->hasKey($line, 'AccountCode')) {
+                    $line['AccountCode'] = $accountCode;
+                }
+
+                // Never inject a tax type when the line already expresses tax
+                // in ANY form. Malaysian SST is per line -- training 8%,
+                // education and rental 6% -- so a connection-wide default
+                // would stamp the wrong rate on a venue recharge.
+                if ($taxType !== null
+                    && ! $this->hasKey($line, 'TaxType')
+                    && ! $this->hasKey($line, 'TaxAmount')
+                ) {
+                    $line['TaxType'] = $taxType;
+                }
+
+                $invoice['LineItems'][$index] = $line;
+            }
+        }
+
+        if (($currency = $this->defaults->currency()) !== null && ! $this->hasKey($invoice, 'CurrencyCode')) {
+            $invoice['CurrencyCode'] = $currency;
+        }
+
+        if (($theme = $this->defaults->brandingThemeId()) !== null && ! $this->hasKey($invoice, 'BrandingThemeID')) {
+            $invoice['BrandingThemeID'] = $theme;
+        }
+
+        $this->resetGuards();
+
+        return $invoice;
+    }
+
+    /**
+     * Treat null and '' as absent, but '0' as present -- '0' is a legitimate
+     * account code. Case-insensitive, so a caller writing 'accountCode' is
+     * not silently given a second, conflicting key.
+     *
+     * @param  array<string, mixed>  $array
+     */
+    private function hasKey(array $array, string $key): bool
+    {
+        foreach ($array as $existing => $value) {
+            if (strcasecmp((string) $existing, $key) === 0) {
+                return $value !== null && $value !== '';
+            }
+        }
+
+        return false;
+    }
+
+    /** @return array<string, mixed> */
+    private function transitionTo(string $idOrNumber, string $status, bool $preflight = true): array
+    {
+        if ($preflight) {
+            $current = $this->find($idOrNumber);
+
+            if ($current !== null) {
+                $from = (string) ($current['Status'] ?? '');
+
+                if (! InvoiceTransitions::allows($from, $status)) {
+                    throw InvalidInvoiceTransitionException::make($idOrNumber, $from, $status);
+                }
+            }
+        }
+
+        return $this->postStatus($idOrNumber, $status);
+    }
+
+    /** @return array<string, mixed> */
+    private function postStatus(string $idOrNumber, string $status): array
+    {
+        $this->assertUsableIdentifier($idOrNumber);
+
+        return $this->unwrapFirst($this->client->post(
+            $this->endpoint().'/'.$this->pathSegment($idOrNumber),
+            ['Invoices' => [['Status' => $status]]],
+        )) ?? [];
+    }
+
+    private function assertUsableIdentifier(string $identifier): void
+    {
+        if ($identifier === '' || str_contains($identifier, '/')) {
+            // A %2F in a path segment is rejected by many edge proxies long
+            // before it reaches Xero.
+            throw new XeroBridgeException(
+                "[{$identifier}] cannot be used as an invoice identifier. Use an InvoiceID or an "
+                .'InvoiceNumber without a slash; to look up by number, use invoiceNumbers() on a filter.'
+            );
+        }
+    }
+
+    private function resetGuards(): void
+    {
+        $this->allowContactMutation = false;
+        $this->allowLineItemReplacement = false;
+    }
+}

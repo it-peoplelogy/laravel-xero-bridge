@@ -1,0 +1,45 @@
+laravel: '@testbench'
+
+providers:
+  - Workbench\App\Providers\WorkbenchServiceProvider
+  - Peoplelogy\XeroBridge\XeroBridgeServiceProvider
+
+migrations:
+  - workbench/database/migrations
+
+seeders:
+  - Workbench\Database\Seeders\DatabaseSeeder
+
+# No Xero credentials here -- this file is committed. Real values for manual
+# exploration belong in workbench/.env, which is gitignored, and must only ever
+# point at a Xero DEMO COMPANY, never a client's live organisation.
+env:
+  - APP_NAME="Xero Bridge Workbench"
+  - DB_CONNECTION=sqlite
+  - DB_DATABASE=":memory:"
+  - QUEUE_CONNECTION=sync
+  - MAIL_MAILER=log
+
+workbench:
+  start: '/'
+  install: true
+  health: false
+  discovers:
+    config: true
+    web: true
+    api: true
+    commands: true
+    components: false
+    factories: true
+    views: false
+  build:
+    - asset-publish
+    - create-sqlite-db
+    - db-wipe
+    - migrate-fresh
+  assets:
+    - laravel-assets
+  sync:
+    - from: storage
+      to: workbench/storage
+      reverse: true

@@ -1,0 +1,40 @@
+name: Bug report
+description: Something in laravel-xero-bridge is not behaving as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not paste tokens, client secrets or real tenant IDs into this form.
+  - type: dropdown
+    id: laravel
+    attributes:
+      label: Laravel version
+      options: ['11.x', '12.x', '13.x']
+    validations:
+      required: true
+  - type: dropdown
+    id: php
+    attributes:
+      label: PHP version
+      options: ['8.2', '8.3', '8.4']
+    validations:
+      required: true
+  - type: input
+    id: package
+    attributes:
+      label: Package version
+      placeholder: 1.0.0
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How can we reproduce it?
+      description: A failing test using Http::fake() is ideal.

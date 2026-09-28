@@ -1,0 +1,36 @@
+name: lint
+
+# Replaces the skeleton's fix-php-code-style-issues.yml, which runs Pint and
+# then AUTO-COMMITS the result with a push to the branch. That needs
+# contents:write and is rejected outright by branch protection, which a
+# governed organisation will have on main. This checks instead of fixing;
+# developers run `composer format` themselves.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pint:
+    name: Code style
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          # One PINNED version, never the matrix: two legs formatting with
+          # different Pint versions produces a formatting flip-flop.
+          php-version: '8.4'
+          coverage: none
+
+      - env:
+          COMPOSER_MEMORY_LIMIT: -1
+        run: composer update --prefer-dist --no-interaction --no-progress
+
+      - run: vendor/bin/pint --test

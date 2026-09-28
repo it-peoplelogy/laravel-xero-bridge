@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/11.5/phpunit.xsd"
+    bootstrap="vendor/autoload.php"
+    colors="true"
+    executionOrder="random"
+    failOnWarning="true"
+    failOnRisky="true"
+    failOnEmptyTestSuite="true"
+    beStrictAboutOutputDuringTests="true"
+    cacheDirectory=".phpunit.cache"
+>
+    <!--
+        This file has to parse identically under PHPUnit 11.5, 12.5 and 13.3,
+        which is what the CI matrix resolves across. Every attribute that was
+        only restating a default has been removed, to keep that surface small.
+    -->
+    <testsuites>
+        <testsuite name="Xero Bridge Test Suite">
+            <directory>tests</directory>
+        </testsuite>
+    </testsuites>
+
+    <php>
+        <!--
+            The CLI php.ini on the development machine is memory_limit=128M,
+            which is not enough for a booted Testbench app. Matches the 512M
+            that pips already sets in its own phpunit.xml.
+        -->
+        <ini name="memory_limit" value="512M"/>
+        <ini name="error_reporting" value="-1"/>
+
+        <!--
+            force="true" so an exported shell variable cannot leak a real
+            credential into the suite.
+        -->
+        <env name="APP_ENV" value="testing" force="true"/>
+        <env name="XERO_CLIENT_ID" value="test-client-id" force="true"/>
+        <env name="XERO_CLIENT_SECRET" value="test-client-secret" force="true"/>
+        <env name="XERO_WEBHOOK_KEY" value="test-webhook-key" force="true"/>
+        <env name="XERO_REDIRECT_URI" value="https://example.test/xero/callback" force="true"/>
+    </php>
+
+    <source>
+        <include>
+            <directory suffix=".php">./src</directory>
+        </include>
+    </source>
+</phpunit>
