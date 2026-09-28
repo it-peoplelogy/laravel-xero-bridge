@@ -10,6 +10,35 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-28
+
+Documentation and metadata only. No code changed, so upgrading from 1.0.1 is a no-op — but the
+installation instructions in 1.0.0 and 1.0.1 were incomplete and would have failed for anyone following
+them, which is what this release corrects.
+
+### Fixed
+
+- **The documented installation steps did not work.** Installing a private Composer repository needs two
+  settings that the README omitted, and neither failure message names its real cause:
+  - `"no-api": true` on the repository entry. Composer's GitHub driver reads metadata from the GitHub
+    API even for an SSH URL, and a private repository's API needs a token — so Composer prompted for one
+    that nobody should have needed to create.
+  - A per-package `"preferred-install": {"peoplelogy/laravel-xero-bridge": "source"}` override. Even with
+    `no-api`, the recorded `dist` URL is a GitHub API zipball that also needs a token, and GitHub answers
+    404 rather than 403. Applications that set `"preferred-install": "dist"` — which Laravel's skeleton
+    does — forbid the fallback to a git clone, so the install died after the lock file had been written.
+
+  Both are now documented in the README and in [`docs/`](docs/01-getting-started.md), with the exact error
+  each one prevents, and the steps were verified end to end from a clean Composer home with no token.
+- `composer.json` declared `"license": "MIT"` while `LICENSE.md` states the package is proprietary and for
+  internal use. The machine-readable field was the wrong one; it now reads `proprietary`.
+
+### Changed
+
+- The README's Laravel 11 warning now covers the consumer-side consequence: `composer require` makes a
+  minimal change and normally succeeds, but a full `composer update` re-resolves `laravel/framework` and
+  can be refused outright because of the unfixed advisories against the 11.x line.
+
 ## [1.0.1] - 2026-09-28
 
 Bug-fix release. Upgrade from 1.0.0 is a drop-in: no configuration changes, no
@@ -95,6 +124,7 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/releases/tag/v1.0.0

@@ -34,6 +34,20 @@ Every cell except the impossible one runs in CI on every push.
 > the compatibility claim is real — but they are non-blocking, and the version is supported on a
 > best-effort basis only.
 >
+> **This affects your own `composer update`, not just ours.** `composer require` makes a minimal change
+> and usually will not re-resolve `laravel/framework`, so adding this package to a Laravel 11
+> application normally succeeds. A *full* `composer update` re-resolves everything and can then be
+> refused outright:
+>
+> ```
+> found laravel/framework[v11.56.1] but these were not loaded, because they are
+> affected by security advisories (...). Go to https://packagist.org/security-advisories/
+> ```
+>
+> Recent Composer versions accept `--no-security-blocking` as an escape hatch, and
+> `composer config policy.advisories.block false` disables the check entirely — but both silence a real
+> signal about your own application. The actual fix is upgrading off Laravel 11.
+>
 > **If you are on Laravel 11, upgrade to 12 or 13.** That is a security fix for your application, not a
 > requirement of this package. Laravel documents an 11 → 12 upgrade as typically a day or less, and
 > describes 12 → 13 as a minor upgrade for most applications.
@@ -44,44 +58,88 @@ Every cell except the impossible one runs in CI on every push.
 
 ### 1. Add the repository
 
-This package is private and is not on Packagist, so Composer has to be told where to find it. Add to the
-consuming application's `composer.json`:
+This package is private and is not on Packagist, so Composer has to be told where to find it. Add **both**
+blocks below to the consuming application's `composer.json` — the `repositories` entry and the
+`preferred-install` override. Adding only the first one fails; see
+[Why those two extra settings](#why-those-two-extra-settings).
 
 ```json
 "repositories": [
     {
         "type": "vcs",
-        "url": "git@github.com:it-peoplelogy/laravel-xero-bridge.git"
+        "url": "git@github.com:it-peoplelogy/laravel-xero-bridge.git",
+        "no-api": true
     }
-]
+],
 ```
 
-> **Note for PIPS:** `pips/composer.json` currently has no `repositories` key at all. This block has to
-> be added.
+```json
+"config": {
+    "preferred-install": {
+        "peoplelogy/laravel-xero-bridge": "source",
+        "*": "dist"
+    }
+}
+```
+
+`repositories` is a top-level key, alongside `require` and `require-dev`. If your application already has
+a `config` block — most Laravel applications do, with `"preferred-install": "dist"` — replace that one
+line rather than adding a second `config` key.
 
 ### 2. Authentication
 
-Two supported routes.
+**SSH — recommended, and nothing is stored.** With the `git@github.com:` URL and `no-api` above, Composer
+shells out to `git` and uses your existing agent. No token, no expiry to manage, no secret on disk.
+Check it works with `ssh -T git@github.com`, which should greet you by username.
 
-**SSH** — for developers and for CI runners with a deploy key. Use the `git@github.com:` URL above;
-Composer shells out to `git` and uses your agent. Nothing to store.
-
-**HTTPS token** — for Docker builds and deploy pipelines. Use the `https://github.com/...` URL and supply
-a token:
+**HTTPS token — for build servers with no SSH key.** Use the `https://github.com/...` URL, drop the
+`preferred-install` override, and supply a token as a build-time environment variable:
 
 ```bash
-COMPOSER_AUTH='{"github-oauth":{"github.com":"ghp_your_token"}}' composer install
+COMPOSER_AUTH='{"github-oauth":{"github.com":"YOUR_TOKEN"}}' composer install
 ```
 
-or an `auth.json` beside `composer.json`. **`auth.json` must be gitignored.** Use a fine-grained personal
-access token scoped to this one repository with read-only Contents — not a classic `repo` token, which
-grants access to the whole organisation.
+Use a **fine-grained** personal access token with read-only *Contents* scoped to this one repository —
+not a classic `repo` token, which grants write access across the whole organisation. An `auth.json` file
+works too, but it stores the token in plain text, so it must be gitignored and is the weaker option.
 
 ### 3. Require a tagged version
 
 ```bash
 composer require peoplelogy/laravel-xero-bridge:^1.0
 ```
+
+### Why those two extra settings
+
+Both settings exist because this is a **private** repository. Without them you hit two separate failures,
+and neither error message names the real cause.
+
+**`"no-api": true`** stops Composer asking for a GitHub token. Composer's GitHub driver reads repository
+metadata from the **GitHub API** even when the URL is SSH, and the API needs a token for a private
+repository. Without this you get an interactive prompt:
+
+```
+Your GitHub credentials are required to fetch private repository metadata
+You need to provide a GitHub access token.
+```
+
+`no-api` tells Composer to treat it as an ordinary git repository and use SSH for metadata too. The cost
+is that Composer clones to read metadata rather than fetching JSON, which is marginally slower and not
+noticeable for a package this size.
+
+**`preferred-install: source`** stops the download failing. Even with `no-api`, the `dist` URL recorded
+for the package is a GitHub API zipball, which also needs a token — and GitHub answers **404**, not 403,
+for an unauthorised private resource:
+
+```
+Failed to download peoplelogy/laravel-xero-bridge from dist: ...zipball/... (HTTP/2 404)
+Source fallback is disabled. Not trying alternative sources.
+```
+
+That last line is the giveaway: applications that set `"preferred-install": "dist"` forbid Composer from
+falling back to a git clone. The per-package override says *clone this one over SSH, keep using fast dist
+archives for everything else*. Installing from source means `vendor/peoplelogy/laravel-xero-bridge`
+contains a `.git` directory, which is harmless.
 
 > ### ⚠️ Tagged releases are mandatory
 >

@@ -70,29 +70,74 @@ jobs. The constraint in `composer.json` is `php: ^8.2` with
 
 ### 1. Add the repository
 
-The package is private and is not on Packagist, so Composer has to be told where to find it. Add to the
-consuming application's `composer.json`:
+The package is private and is not on Packagist, so Composer has to be told where to find it. Add **both**
+of the following to the consuming application's `composer.json`. Adding only the first fails — see
+[Why both settings are needed](#why-both-settings-are-needed) below.
 
 ```json
 "repositories": [
     {
         "type": "vcs",
-        "url": "git@github.com:it-peoplelogy/laravel-xero-bridge.git"
+        "url": "git@github.com:it-peoplelogy/laravel-xero-bridge.git",
+        "no-api": true
     }
-]
+],
 ```
 
-If the application has no `repositories` key at all yet — PIPS does not — add the whole block.
+```json
+"config": {
+    "preferred-install": {
+        "peoplelogy/laravel-xero-bridge": "source",
+        "*": "dist"
+    }
+}
+```
+
+`repositories` is a top-level key, sitting alongside `require` and `require-dev`. Most Laravel
+applications already have a `config` block containing `"preferred-install": "dist"` — replace that single
+line rather than adding a second `config` key.
+
+### Why both settings are needed
+
+Both exist because the repository is **private**, and neither failure message names its real cause.
+
+**`"no-api": true`** stops Composer demanding a GitHub token. Composer's GitHub driver reads repository
+metadata from the GitHub **API** even when the URL is SSH, and that API needs a token for a private
+repository:
+
+```
+Your GitHub credentials are required to fetch private repository metadata
+You need to provide a GitHub access token.
+```
+
+With `no-api`, Composer treats it as an ordinary git repository and uses SSH for metadata too. It clones
+to read metadata rather than fetching JSON, which is marginally slower and unnoticeable at this size.
+
+**`preferred-install: source`** stops the *download* failing a moment later. Even with `no-api`, the
+recorded `dist` URL is a GitHub API zipball, which also needs a token — and GitHub returns **404**, not
+403, for an unauthorised private resource:
+
+```
+Failed to download peoplelogy/laravel-xero-bridge from dist: ...zipball/... (HTTP/2 404)
+Source fallback is disabled. Not trying alternative sources.
+```
+
+That second line is the real clue: an application with `"preferred-install": "dist"` forbids the fallback
+to a git clone. The per-package override says *clone this one over SSH, keep using fast dist archives for
+everything else*. The package then lives in `vendor/` as a git checkout, with a `.git` directory, which is
+harmless.
 
 ### 2. Authenticate to the repository
 
 Two supported routes. Pick by environment, not by preference.
 
 **SSH** — for developers, and for CI runners with a deploy key. Use the `git@github.com:` URL above.
-Composer shells out to `git` and uses your agent. Nothing is stored in the project.
+Composer shells out to `git` and uses your agent. Nothing is stored in the project, and there is no token
+to expire or rotate. Confirm it works with `ssh -T git@github.com`, which greets you by username.
 
 **HTTPS token** — for Docker builds and deploy pipelines that have no agent. Use the
-`https://github.com/it-peoplelogy/laravel-xero-bridge.git` URL and supply a token:
+`https://github.com/it-peoplelogy/laravel-xero-bridge.git` URL, drop the `preferred-install` override
+(dist downloads work once Composer is authenticated), and supply a token:
 
 ```bash
 COMPOSER_AUTH='{"github-oauth":{"github.com":"<your-token>"}}' composer install
