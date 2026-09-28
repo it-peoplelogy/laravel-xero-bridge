@@ -10,25 +10,56 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-09-28
+
+Bug-fix release. Upgrade from 1.0.0 is a drop-in: no configuration changes, no
+constraint changes, nothing to migrate.
+
 ### Fixed
 
-- Laravel 11 compatibility. `testbench.yaml` carried a `laravel: '@testbench'` path alias that only
-  Testbench 10+ resolves; on Testbench 9 it reached Laravel's `PackageManifest` unresolved and failed
-  `composer install` itself.
-- Token expiry was computed with `CarbonImmutable::now()`, which on Carbon 2 keeps test-now state
-  separate from `Carbon`. Applications on Carbon 2 (Laravel 11 only) that froze time in their tests
-  got wrong expiry answers, and `xero-bridge:refresh-tokens` could report a stale token as "still
-  fresh". All clock reads now go through `Support\Clock`, which uses the framework clock.
+- **`XeroBridge::withDefaults()` silently misapplied overrides, in both directions.** Resources are
+  memoised per connection with their defaults baked in at construction, and the memo key did not
+  include the overrides. If a resource had already been resolved the override was dropped; if the
+  overridden call resolved first, the override leaked into every later plain call on that connection
+  — putting the wrong account code on an unrelated invoice with nothing failing. An override now
+  builds a throwaway instance so it is scoped to the expression that asked for it. The no-override
+  path still memoises.
+- **`XeroBridge::redirectAfterConnectUsing()` did nothing.** The hook existed on the manager and the
+  OAuth callback controller never consulted it, so a registered callback was silently ignored. It is
+  now consulted first, receives the stored `XeroConnection` (`null` on the failure path), and falls
+  through to the configured destination when it returns nothing usable.
+- **Laravel 11 could not install at all.** `testbench.yaml` carried a `laravel: '@testbench'` path
+  alias that only Testbench 10+ resolves; on Testbench 9 it reached Laravel's `PackageManifest`
+  unresolved and failed `composer install` itself, via the `post-autoload-dump` script.
+- **Token expiry was computed against the wrong clock on Carbon 2.** `CarbonImmutable::now()` keeps
+  test-now state separate from `Carbon` on Carbon 2, which Laravel 11 still permits. Applications
+  that froze time in their tests got wrong expiry answers, and `xero-bridge:refresh-tokens` could
+  report a stale token as "still fresh" and refresh nothing. All clock reads now go through
+  `Support\Clock`, which reads the framework clock and behaves identically on Carbon 2 and 3.
+
+### Added
+
+- Full developer documentation under [`docs/`](docs/README.md): getting started, invoices and the
+  filter builder, contacts/payments/settings, webhooks and events, commands and errors, and worked
+  recipes — with request and response samples taken from Xero's own API specification.
 
 ### Changed
 
 - **Laravel 11 is now best-effort, not fully supported.** It reached end of security support on
   12 March 2026 and three unfixed advisories affect the whole 11.x line, so Composer will not install
   it under its default advisory policy. The package still works there and CI still exercises it, but
-  those legs no longer gate the build. See the README. Consumers on Laravel 11 should upgrade to 12
-  or 13.
+  those legs no longer gate the build. The `illuminate/contracts` constraint is unchanged, so nothing
+  breaks for existing consumers. Applications on Laravel 11 should upgrade to 12 or 13 — that is a
+  security fix for the application, not a requirement of this package.
+- Corrected two inaccurate notes in the config comments and README: Xero assigned granular scopes to
+  all Web and PKCE apps from March 2026, new and existing alike, rather than only to apps created
+  after a cutoff date; and the connection cap is two separate limits — organisations per developer
+  tier, and uncertified applications per organisation.
 
 ## [1.0.0] - 2026-09-28
+
+> Superseded by 1.0.1, which fixes two silent bugs present in this release. Use `^1.0`, which
+> resolves to the newest patch automatically.
 
 ### Added
 
@@ -64,5 +95,6 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/releases/tag/v1.0.0
