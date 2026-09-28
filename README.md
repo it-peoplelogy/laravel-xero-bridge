@@ -184,6 +184,78 @@ are live in the application with no reinstall.
 
 ---
 
+## Uninstalling
+
+How much there is to undo depends on how far you got. Work through these in order and stop when you reach
+a step that does not apply.
+
+### If you only ran `composer require`
+
+```bash
+composer remove peoplelogy/laravel-xero-bridge
+```
+
+Then tidy the two things `composer remove` leaves behind in `composer.json`:
+
+1. Delete the `"repositories"` entry for this package.
+2. Revert `"preferred-install"` to plain `"dist"` (or remove the per-package override if you keep other
+   private repositories).
+
+Nothing else exists yet — no published files, no table — so you are done.
+
+### If you also ran `xero-bridge:install` and `migrate`
+
+**Roll the migration back BEFORE removing the package**, while the class is still autoloadable. Check
+what you are about to undo first — `--step=1` rolls back the most recent migration, which is only ours
+if nothing has been migrated since:
+
+```bash
+php artisan migrate:status | tail -5      # confirm the xero_connections migration is last
+php artisan migrate:rollback --step=1     # drops the xero_connections table
+composer remove peoplelogy/laravel-xero-bridge
+```
+
+If other migrations have run since, do not use `--step`. Drop the table directly instead — the migration
+creates nothing else, and there are no foreign keys into it:
+
+```sql
+DROP TABLE xero_connections;   -- plus your connection's prefix, e.g. pips_xero_connections
+```
+
+then delete the migration file and the row for it in the `migrations` table.
+
+Then remove what publishing left in your application:
+
+```bash
+rm config/xero-bridge.php
+rm database/migrations/*_create_xero_connections_table.php
+```
+
+and delete the `XERO_*` keys from `.env` and `.env.example`.
+
+> ### ⚠️ Dropping the table does not disconnect you from Xero
+>
+> `xero_connections` holds encrypted OAuth tokens, and deleting them only makes *you* forget the
+> connection. Xero still lists your application against that organisation, and it still counts against
+> the connection limits.
+>
+> Disconnect properly **before** you drop the table, while you can still read the tokens:
+>
+> - **Per organisation** — `DELETE https://api.xero.com/connections/{id}`, using the stored
+>   `connection_id`. Note that is Xero's *connection* id, not the `tenant_id`.
+> - **Everything authorised in one flow** — `POST https://identity.xero.com/connect/revocation` with the
+>   refresh token.
+>
+> Or have an administrator remove it from the organisation's connected apps in the Xero UI.
+
+### If `composer remove` fails
+
+On Laravel 11 you may see the advisory error described in the support matrix above, because removing a
+package re-resolves the dependency graph. Add `--no-security-blocking`, or fix the underlying problem by
+upgrading off Laravel 11.
+
+---
+
 ## Create your own Xero app
 
 Each environment should have its **own** Xero app. Go to

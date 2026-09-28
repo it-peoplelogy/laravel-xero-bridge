@@ -10,6 +10,23 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-09-28
+
+Documentation only.
+
+### Added
+
+- An [Uninstalling](README.md#uninstalling) section covering both cases: a bare `composer require`, and a
+  full install where the config and migration were published. It spells out that the migration must be
+  rolled back **before** the package is removed, while the class is still autoloadable, and that
+  `--step=1` is only safe when nothing has been migrated since.
+
+  It also warns that dropping `xero_connections` does not disconnect anything: the table holds encrypted
+  OAuth tokens, and deleting them only makes your application forget the connection. Xero still lists the
+  application against that organisation and still counts it against the connection limits, so the
+  disconnect (`DELETE /connections/{id}`, or the revocation endpoint) has to happen first — while the
+  tokens are still readable.
+
 ## [1.0.2] - 2026-09-28
 
 Documentation and metadata only. No code changed, so upgrading from 1.0.1 is a no-op — but the
@@ -124,7 +141,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/releases/tag/v1.0.0

@@ -1013,6 +1013,18 @@ into a loud failure instead of a live call to Xero from CI.
 
 ---
 
+## Uninstalling
+
+Removing the package is `composer remove peoplelogy/laravel-xero-bridge`, plus tidying the
+`repositories` and `preferred-install` entries you added above. If you had already run
+`xero-bridge:install` and `migrate` there is more to it — in particular, **roll the migration back
+before removing the package**, and disconnect from Xero before dropping the table, because deleting
+your stored tokens does not revoke anything on Xero's side.
+
+The full procedure, including the disconnect endpoints, is in the
+[README's Uninstalling section](../README.md#uninstalling). It is kept in one place deliberately, so
+the two cannot drift.
+
 ## Where next
 
 - [Invoices](02-invoices.md) — every method on `invoices()`, the `InvoiceFilter` builder, the safety
