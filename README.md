@@ -124,6 +124,33 @@ are live in the application with no reinstall.
 
 ---
 
+## Updating
+
+```bash
+composer update peoplelogy/laravel-xero-bridge
+```
+
+**Name the package.** A bare `composer update` re-resolves your entire dependency graph, which is a much
+larger change than you asked for and can fail for reasons unrelated to this package — see the Laravel 11
+note in the support matrix above. Naming the package updates only this one and leaves everything else on
+its locked version.
+
+With `^1.0` you receive every later `1.x` release, so this command is all that is needed to move from,
+say, `1.0.1` to the newest. Read [CHANGELOG.md](CHANGELOG.md) first: it is written for the consumer and
+says what changed for *you*, not what was refactored internally.
+
+If a release raises one of the package's own requirements, Composer will refuse rather than silently
+upgrade a shared dependency. Allow it explicitly when that happens:
+
+```bash
+composer update peoplelogy/laravel-xero-bridge --with-dependencies
+```
+
+Nothing else is needed for a patch release. If a release adds configuration or a migration, its changelog
+entry says so and names the command to run.
+
+---
+
 ## Uninstalling
 
 How much there is to undo depends on how far you got. Work through these in order and stop when you reach

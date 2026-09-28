@@ -10,6 +10,20 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.0.6] - 2026-09-28
+
+Documentation only.
+
+### Added
+
+- An [Updating](README.md#updating) section. It was missing: the README covered installing and
+  uninstalling but never said how to move to a newer release.
+
+  The command is `composer update peoplelogy/laravel-xero-bridge` — naming the package matters, because a
+  bare `composer update` re-resolves the whole dependency graph and can fail for reasons that have
+  nothing to do with this package. Also covers `--with-dependencies` for when a release raises one of the
+  package's own requirements.
+
 ## [1.0.5] - 2026-09-28
 
 Documentation only. The repository is now public, so installation no longer needs any authentication.
@@ -178,7 +192,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.5...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.6...HEAD
+[1.0.6]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.4...v1.0.5
 [1.0.4]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.3...v1.0.4
 [1.0.3]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.2...v1.0.3
