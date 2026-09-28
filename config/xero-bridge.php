@@ -39,9 +39,10 @@ return [
     | Space-separated. `offline_access` is mandatory: without it Xero issues no
     | refresh token and the connection dies 30 minutes after it is made.
     |
-    | These are Xero's granular scopes. The broad scopes they replace (such as
-    | accounting.transactions) remain available until September 2027, but apps
-    | created on or after 2 March 2026 are granular-only.
+    | These are Xero's granular scopes. Since March 2026 Xero has assigned
+    | granular scopes to all Web and PKCE apps, new and existing alike; the
+    | broad scopes they replace (such as accounting.transactions) keep working
+    | until September 2027.
     */
     'scopes' => env('XERO_SCOPES', 'openid profile email offline_access accounting.invoices accounting.payments accounting.contacts accounting.settings accounting.attachments'),
 

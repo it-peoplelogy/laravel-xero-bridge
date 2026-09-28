@@ -161,6 +161,17 @@ class XeroBridgeManager
     {
         $key = $this->key();
 
+        // Resources are memoised per connection with their defaults baked in
+        // at construction. That is correct for the plain case, and WRONG the
+        // moment withDefaults() is in play: the memo key does not include the
+        // overrides, so the cached instance would either ignore them or -- far
+        // worse -- keep serving them to every later plain call on the same
+        // connection. Build a throwaway instance instead, so an override is
+        // scoped to the expression that asked for it and cannot leak.
+        if ($this->overrideDefaults !== []) {
+            return new $class($this->client(), $this->defaults(), $key);
+        }
+
         return $this->registry->resource($key, $class, fn () => new $class(
             $this->client(),
             $this->defaults(),

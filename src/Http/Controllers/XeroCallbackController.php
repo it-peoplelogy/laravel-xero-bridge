@@ -11,10 +11,12 @@ use Illuminate\Support\Facades\Route;
 use Peoplelogy\XeroBridge\Contracts\ConnectionRepository;
 use Peoplelogy\XeroBridge\Events\XeroConnected;
 use Peoplelogy\XeroBridge\Exceptions\XeroBridgeException;
+use Peoplelogy\XeroBridge\Models\XeroConnection;
 use Peoplelogy\XeroBridge\OAuth\IdentityClient;
 use Peoplelogy\XeroBridge\OAuth\OAuthStateStore;
 use Peoplelogy\XeroBridge\OAuth\TenantInfo;
 use Peoplelogy\XeroBridge\Support\XeroConfig;
+use Peoplelogy\XeroBridge\XeroBridgeManager;
 use Psr\Log\LoggerInterface;
 use Throwable;
 
@@ -102,6 +104,7 @@ final class XeroCallbackController
         return $this->succeed(
             "Connected to the Xero organisation \"{$connection->displayName()}\".",
             $entry,
+            $connection,
         );
     }
 
@@ -186,18 +189,41 @@ final class XeroCallbackController
     }
 
     /** @param array{key: string, return_to: ?string}|null $entry */
-    private function succeed(string $message, ?array $entry = null): RedirectResponse
-    {
-        return redirect()->to($this->destination($entry))
+    private function succeed(
+        string $message,
+        ?array $entry = null,
+        ?XeroConnection $connection = null,
+    ): RedirectResponse {
+        return redirect()->to($this->destination($entry, $connection))
             ->with('xero-bridge.status', $message)
             // Also flashed as `status` so Breeze/Jetstream layouts show it
             // without the host wiring anything up.
             ->with('status', $message);
     }
 
-    /** @param array{key: string, return_to: ?string}|null $entry */
-    private function destination(?array $entry): string
+    /**
+     * Precedence, highest first:
+     *   1. a closure registered with XeroBridge::redirectAfterConnectUsing()
+     *   2. a validated same-host ?return_to= (opt-in)
+     *   3. routes.after_connect_route, if that named route exists
+     *   4. routes.after_connect_redirect
+     *
+     * The closure comes first because it is the only option that can decide
+     * per connection -- a config file cannot hold a closure once cached, which
+     * is the whole reason the hook exists.
+     *
+     * @param  array{key: string, return_to: ?string}|null  $entry
+     */
+    private function destination(?array $entry, ?XeroConnection $connection = null): string
     {
+        if (($callback = XeroBridgeManager::afterConnectCallback()) !== null) {
+            $url = $callback($connection);
+
+            if (is_string($url) && $url !== '') {
+                return $url;
+            }
+        }
+
         if (($entry['return_to'] ?? null) !== null) {
             return (string) $entry['return_to'];
         }

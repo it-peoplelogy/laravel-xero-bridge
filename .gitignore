@@ -27,8 +27,12 @@ _ide_helper_models.php
 # Misc
 phpunit.xml
 phpstan.neon
-/docs
 /coverage
+
+# NOTE: /docs is deliberately NOT ignored. The skeleton ignores it because it
+# uses that folder for a generated docs site; here it holds the hand-written
+# reference other teams read. It is export-ignored in .gitattributes instead,
+# so it stays out of the Composer dist without being lost from the repo.
 
 # Credentials. testbench.yaml IS committed (it registers the provider, so
 # `composer serve` works for everyone) and deliberately holds no secrets --

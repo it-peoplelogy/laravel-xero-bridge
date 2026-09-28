@@ -169,8 +169,9 @@ use `http://localhost` instead. (The package raises a clear error for this, beca
 > ### ⚠️ Broad scopes retire in September 2027
 >
 > `accounting.transactions` is replaced by `accounting.invoices` + `accounting.payments` +
-> `accounting.banktransactions` + `accounting.manualjournals`. Apps created on or after 2 March 2026 are
-> granular-only. This package ships granular scopes by default — do not add broad ones back.
+> `accounting.banktransactions` + `accounting.manualjournals`. Since March 2026 Xero has assigned
+> granular scopes to all Web and PKCE apps, new and existing alike. This package ships granular scopes
+> by default — do not add broad ones back.
 >
 > Scopes are **additive and cannot be removed** from an existing token without revoking it, and a
 > connection made before you added a scope does not gain it. Deploy the scope change *before* asking
@@ -262,10 +263,14 @@ php artisan xero-bridge:status     # what is connected, and how healthy
 
 > ### ⚠️ Connection limits
 >
-> Xero caps how many connections an **uncertified** application may hold, and separately how many
-> uncertified applications a **single organisation** may connect to. An internal business system can
-> never be certified — that requires a public app-store listing — and a connection over the limit is
-> **refused**, not degraded.
+> Two different caps apply, and they are often confused:
+>
+> - **How many organisations your app may connect to** is set by your Xero **developer-account tier**
+>   (Starter allows far fewer than Core).
+> - **How many uncertified apps a single organisation may connect to** is capped separately. An
+>   internal business system can never be certified — that requires a public app-store listing.
+>
+> A connection over either limit is **refused**, not degraded.
 >
 > Check the numbers for your plan against Xero's
 > [API limits](https://developer.xero.com/documentation/guides/oauth2/limits/) before onboarding more
