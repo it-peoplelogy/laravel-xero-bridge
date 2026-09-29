@@ -383,8 +383,15 @@ XERO_CONSOLE_MIDDLEWARE="web,auth"
 XERO_CONSOLE_WRITABLE_ORGANISATIONS=
 
 # --- MyInvois TIN validation (Malaysia) -------------------------------------
-# Off by default. Nothing below matters unless this is true.
-MYINVOIS_ENABLED=false
+# Verifies a buyer's TIN against LHDN before you write it onto a Xero contact.
+#
+# The package default is FALSE. The line below is set to true because that is
+# what you write when you want the feature. It also needs the two values below
+# and its OWN config published:
+#     php artisan vendor:publish --tag=myinvois-config
+# Leaving it true with those blank is not fatal: nothing else changes, the test
+# console shows what is missing, and a validate call throws naming the key.
+MYINVOIS_ENABLED=true
 # sandbox or production. Each issues its OWN client id and secret, so switching
 # this without also switching those is a misconfiguration, not a promotion.
 MYINVOIS_ENVIRONMENT=sandbox
@@ -392,11 +399,15 @@ MYINVOIS_ENVIRONMENT=sandbox
 MYINVOIS_CLIENT_ID=
 MYINVOIS_CLIENT_SECRET=
 
-# --- API call capture (off by default) --------------------------------------
+# --- API call capture -------------------------------------------------------
 # Records every Xero and LHDN request and response into xero_api_calls, for
-# YOUR dashboard to read. Needs the migrations published and run. Bank details
-# and credentials are removed before the insert and cannot be switched back on.
-XERO_CAPTURE=false
+# YOUR dashboard to read. Bank details and credentials are removed before the
+# insert and cannot be switched back on.
+#
+# The package default is FALSE. The line below is set to true because that is
+# what you write when you want the feature -- it also needs the migrations
+# published and run, or nothing is recorded and a warning names the command.
+XERO_CAPTURE=true
 # all | writes | errors. `writes` skips successful reads, never a failure.
 XERO_CAPTURE_MODE=writes
 # Pruned by xero-bridge:prune -- schedule it, or the table grows forever.
