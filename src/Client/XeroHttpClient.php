@@ -8,6 +8,7 @@ use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Str;
+use Peoplelogy\XeroBridge\Capture\ApiCallRecorder;
 use Peoplelogy\XeroBridge\Exceptions\XeroAuthenticationException;
 use Peoplelogy\XeroBridge\Exceptions\XeroBridgeException;
 use Peoplelogy\XeroBridge\Exceptions\XeroRateLimitException;
@@ -26,6 +27,8 @@ use Throwable;
 final class XeroHttpClient
 {
     private ?RateLimitStatus $lastRateLimit = null;
+
+    private ?ApiCallRecorder $recorder = null;
 
     public function __construct(
         private readonly string $connectionKey,
@@ -95,7 +98,13 @@ final class XeroHttpClient
         $connection = $this->tokens->valid($this->connectionKey);
         $usedToken = $this->tokens->readToken($connection, 'access_token');
 
-        $response = $this->dispatch($connection, $usedToken, $method, $uri, $payload, $headers, $query, $accept);
+        // One id for the whole logical call. The 401 replay below is a SECOND
+        // HTTP request, and this is what puts the two captured rows back
+        // together -- otherwise "why did this take two round trips?" cannot be
+        // answered from the table.
+        $callId = $this->recorder()->newCallId();
+
+        $response = $this->dispatch($connection, $usedToken, $method, $uri, $payload, $headers, $query, $accept, $callId, 1);
 
         if ($response->status() === 401) {
             // Insufficient scope is ALSO a 401, and refreshing will never fix
@@ -113,7 +122,7 @@ final class XeroHttpClient
             $connection = $this->tokens->refreshBecauseOf($connection, $usedToken);
             $newToken = $this->tokens->readToken($connection, 'access_token');
 
-            $response = $this->dispatch($connection, $newToken, $method, $uri, $payload, $headers, $query, $accept);
+            $response = $this->dispatch($connection, $newToken, $method, $uri, $payload, $headers, $query, $accept, $callId, 2);
 
             if ($response->status() === 401) {
                 throw XeroAuthenticationException::afterRefresh($response, $this->connectionKey);
@@ -143,6 +152,8 @@ final class XeroHttpClient
         array $headers,
         array $query,
         ?string $accept = null,
+        string $callId = '',
+        int $attempt = 1,
     ): Response {
         $isWrite = ! in_array(strtoupper($method), ['GET', 'HEAD', 'OPTIONS'], true);
 
@@ -172,13 +183,85 @@ final class XeroHttpClient
             $url .= (str_contains($url, '?') ? '&' : '?').$this->buildQuery($query);
         }
 
-        return match (strtoupper($method)) {
-            'GET' => $request->get($url),
-            'DELETE' => $request->delete($url, $payload),
-            'PUT' => $request->put($url, $payload),
-            'PATCH' => $request->patch($url, $payload),
-            default => $request->post($url, $payload),
-        };
+        // The headers as actually SENT, including the ones pending() adds.
+        // The bearer token is handed to the recorder rather than withheld, so a
+        // test can prove the redactor removed a value that was genuinely there.
+        $effective = array_merge($headers, [
+            'Authorization' => 'Bearer '.$accessToken,
+            'Xero-tenant-id' => (string) $connection->tenant_id,
+            'Accept' => $accept ?? 'application/json',
+            'User-Agent' => $this->config->userAgent(),
+        ]);
+
+        $absolute = rtrim($this->config->endpoint('api'), '/').'/'.ltrim($uri, '/');
+        $started = hrtime(true);
+
+        try {
+            $response = match (strtoupper($method)) {
+                'GET' => $request->get($url),
+                'DELETE' => $request->delete($url, $payload),
+                'PUT' => $request->put($url, $payload),
+                'PATCH' => $request->patch($url, $payload),
+                default => $request->post($url, $payload),
+            };
+        } catch (Throwable $e) {
+            // A call that never got an answer is the most interesting row in
+            // the table: we sent something and never learned the outcome.
+            $this->capture($absolute, $method, $payload, $effective, $query, $connection, $callId, $attempt, $started, null, $e);
+
+            throw $e;
+        }
+
+        $this->capture($absolute, $method, $payload, $effective, $query, $connection, $callId, $attempt, $started, $response, null);
+
+        return $response;
+    }
+
+    /**
+     * @param  array<mixed>  $payload
+     * @param  array<string, mixed>  $headers
+     * @param  array<string, mixed>  $query
+     */
+    private function capture(
+        string $url,
+        string $method,
+        array $payload,
+        array $headers,
+        array $query,
+        XeroConnection $connection,
+        string $callId,
+        int $attempt,
+        float $started,
+        ?Response $response,
+        ?Throwable $error,
+    ): void {
+        $this->recorder()->record(
+            channel: 'xero.api',
+            method: $method,
+            url: $url,
+            requestHeaders: $headers,
+            requestQuery: $query,
+            requestBody: $payload === [] ? null : $payload,
+            response: $response,
+            error: $error,
+            startedAt: $started,
+            connectionKey: $this->connectionKey,
+            tenantId: (string) $connection->tenant_id,
+            logicalCallId: $callId,
+            attempt: $attempt,
+        );
+    }
+
+    /**
+     * Resolved lazily and held, rather than injected.
+     *
+     * Injecting it would change this class's constructor, which the client
+     * registry and a number of tests build by hand -- and the recorder is a
+     * singleton, so there is nothing to gain from threading it through.
+     */
+    private function recorder(): ApiCallRecorder
+    {
+        return $this->recorder ??= app(ApiCallRecorder::class);
     }
 
     /**

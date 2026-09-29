@@ -7,6 +7,7 @@ namespace Peoplelogy\XeroBridge\Resources;
 use InvalidArgumentException;
 use Peoplelogy\XeroBridge\Exceptions\XeroBridgeException;
 use Peoplelogy\XeroBridge\Exceptions\XeroValidationException;
+use Throwable;
 
 class Contacts extends Resource
 {
@@ -86,9 +87,21 @@ class Contacts extends Resource
     {
         $this->assertValidName($contact['Name'] ?? null);
 
-        return $this->unwrapFirst(
-            $this->client->put($this->endpoint(), ['Contacts' => [$contact]])
-        ) ?? [];
+        $claim = $this->claimWrite('contact.create');
+
+        try {
+            $body = $this->client->put($this->endpoint(), ['Contacts' => [$contact]]);
+        } catch (Throwable $e) {
+            $this->releaseWriteOnProvenFailure($claim, $e);
+
+            throw $e;
+        }
+
+        $created = $this->unwrapFirst($body) ?? [];
+
+        $this->confirmWrite($claim, $created);
+
+        return $created;
     }
 
     /**

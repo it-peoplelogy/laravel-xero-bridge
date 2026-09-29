@@ -10,6 +10,125 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-29
+
+### Added
+
+- **Every Xero and LHDN call, recorded for your own dashboard.** Set `XERO_CAPTURE=true`, publish
+  and run the migrations, and the request and response of every call lands in `xero_api_calls` for
+  your application to render however it likes. The package ships no viewer on purpose -- your roles
+  decide who may see customer data, not ours -- and `/xero/console` is unchanged.
+
+  ```php
+  use Peoplelogy\XeroBridge\Models\XeroApiCall;
+
+  XeroApiCall::forOwner($order)->latest()->get();
+  XeroApiCall::failed()->whereDate('created_at', today())->get();
+  ```
+
+  Name the record a call belongs to, and its rows can be joined back to it:
+
+  ```php
+  app(ApiCallRecorder::class)->forOwner($order, fn () => XeroBridge::invoices()->create([...]));
+  ```
+
+  **Bank details and credentials never reach the table.** Redaction happens before the insert, not
+  on the way out, and neither group can be switched back on: the bearer token, the access, refresh
+  and id tokens, the client secret, `Organisation.APIKey`, your own and your customers' bank account
+  numbers, and the whole `BatchPayments` block. The Malaysian TIN is masked to its last four, so a
+  row still joins to its `myinvois_validations` verdict; the TIN in the MyInvois URL path and the
+  NRIC or BRN in its query string are removed, neither being reachable by any rule that walks a
+  body. What is deliberately KEPT is the part worth reading: `Contact.AccountNumber` (which is not a
+  bank account -- it is normally your own customer code), `BankAccountType`, `Account.Code`,
+  `CompanyNumber`, `correlationId`, `Idempotency-Key` and `Xero-tenant-id`.
+
+  Defaults: off; `writes` mode, which skips successful reads but never skips a failure; 90-day
+  retention through `xero-bridge:prune`, which now prunes this table too. See
+  [docs/10-api-capture.md](docs/10-api-capture.md).
+
+  A project that upgrades and does nothing is unaffected: no table, no rows, no behaviour change.
+
+- **Duplicate protection for writes into Xero.** Xero honours an idempotency key for only six
+  minutes, which no realistic queue backoff stays inside -- so a job retried an hour later has
+  always been able to create a second invoice. Name the record a write belongs to and that cannot
+  happen:
+
+  ```php
+  XeroBridge::invoices()->for($order)->create([...]);
+  ```
+
+  A second attempt throws `XeroWriteAlreadyClaimedException` carrying the id already created, and
+  nothing reaches Xero. Works for invoices, contacts and payments. Use `->for($order, 'deposit')`
+  when one record legitimately needs two writes.
+
+  The claim is recorded BEFORE the request leaves, which decides what happens when things go wrong.
+  A 400 proves nothing was created, so the claim is released for a corrected retry. A timeout, a
+  5xx or a killed worker proves nothing at all, so the claim stays pending and BLOCKS further
+  writes for that record at any age -- nothing re-sends on its own. That swaps a duplicate invoice
+  in a customer's ledger for one stuck row a human clears, which `xero-bridge:prune` reports.
+
+  Do not wrap a Xero write in a database transaction: the claim must be committed before the HTTP
+  call, and a rollback after Xero accepted the invoice would erase the only record that it exists.
+
+- **Durable webhook replay dedupe.** Xero stores undelivered events for up to 31 days and replays
+  them. With `XERO_WEBHOOK_DEDUPE=true` an event already dispatched is skipped and its
+  `delivery_count` incremented -- the only direct evidence that the window is being exercised. This
+  does NOT make your listeners idempotent and is not a substitute for writing them that way.
+
+- **A MyInvois verdict record.** With `MYINVOIS_AUDIT=true`, every TIN validation is recorded, both
+  answers, with LHDN's correlation id -- which until now was read only when building an exception,
+  so every actual verdict discarded it.
+
+  The TIN and the identifier are NOT stored. They appear only as a keyed HMAC, because a Malaysian
+  registration number is twelve digits and a plain hash of one is exhausted on a laptop in under a
+  second. Readable columns are the id type, the last four characters of the TIN, the verdict, the
+  status, the correlation id, the environment and a rules version. `forgetSubject()` and
+  `forgetOwner()` handle erasure.
+
+  Note the cost: the HMAC key derives from your application key, so rotating `APP_KEY` orphans
+  every stored hash.
+
+- **`xero-bridge:prune`**, one scheduled command for all three tables, with `--dry-run`. It exits
+  non-zero when a write claim has been pending over an hour, because each one blocks writes for its
+  record.
+
+- **`WebhookEvent::dedupeKey()`**, so a consumer building their own dedupe cannot get the key wrong.
+  It is `tenantId|resourceId|eventType|eventDateUtc` -- deliberately NOT `entropy`, which Xero
+  varies between deliveries of the same logical event.
+
+- **`MyInvoisClient::lastCorrelationId()`**, readable without switching the verdict table on.
+
+### Changed
+
+- **`ProcessXeroWebhook` is now a unique job, and retries.** This is the one behaviour change that
+  arrives on `composer update` with no migration and no configuration, and it fixes a duplicate
+  path that existed for every webhook consumer: the controller dispatches the job BEFORE returning
+  its 200, so a response missing Xero's five-second budget meant the retry queued a second
+  identical job and every listener fired twice.
+
+  It also now has `$tries = 5` with backoff 10s / 30s / 2m / 10m. Before, no `$tries` was set, so
+  Laravel's default of a single attempt applied -- one failing listener and the delivery was lost.
+  Set `XERO_WEBHOOK_TRIES=1` to keep the old behaviour.
+
+  The lock uses your cache store, and `array` and `file` give no cross-process guarantee -- the same
+  caveat that already applies to token refresh locking.
+
+### Upgrade notes
+
+**Nothing is required.** A consumer who runs `composer update` and nothing else gets no new tables
+and no behaviour change beyond the webhook retry above. All three tables ship as migration stubs,
+are published deliberately, and every recorder stays inert until both its flag and its table exist.
+
+To switch any of it on:
+
+```bash
+php artisan vendor:publish --tag=xero-bridge-migrations
+php artisan vendor:publish --tag=myinvois-migrations
+php artisan migrate
+```
+
+See [Persistence](docs/09-persistence.md).
+
 ## [1.3.0] - 2026-09-29
 
 Adds an optional Malaysian tax-authority client. Nothing existing changes behaviour and nothing is
@@ -332,7 +451,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.6...v1.1.0

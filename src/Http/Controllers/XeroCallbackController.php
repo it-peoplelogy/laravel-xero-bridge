@@ -8,6 +8,7 @@ use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Peoplelogy\XeroBridge\Capture\ApiCallRecorder;
 use Peoplelogy\XeroBridge\Contracts\ConnectionRepository;
 use Peoplelogy\XeroBridge\Events\XeroConnected;
 use Peoplelogy\XeroBridge\Exceptions\XeroBridgeException;
@@ -117,11 +118,27 @@ final class XeroCallbackController
      */
     private function selectTenant(string $accessToken, string $key): TenantInfo
     {
+        $started = hrtime(true);
+
         $response = $this->http
             ->withToken($accessToken)
             ->withHeaders(['Accept' => 'application/json'])
             ->timeout((int) $this->config->get('tokens.http_timeout', 8))
             ->get($this->config->endpoint('connections'));
+
+        // This call does NOT go through XeroHttpClient, so it would be the one
+        // silent hole in the capture table if it were not recorded here. It is
+        // also the call that carries a brand-new token and returns every
+        // organisation the authorising user can reach.
+        app(ApiCallRecorder::class)->record(
+            channel: 'xero.api',
+            method: 'GET',
+            url: $this->config->endpoint('connections'),
+            requestHeaders: ['Authorization' => 'Bearer '.$accessToken],
+            response: $response,
+            startedAt: $started,
+            connectionKey: $key,
+        );
 
         if (! $response->successful()) {
             throw (new XeroBridgeException(

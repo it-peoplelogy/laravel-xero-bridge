@@ -191,6 +191,183 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Write ledger
+    |--------------------------------------------------------------------------
+    |
+    | Durable duplicate protection for writes into Xero.
+    |
+    | Xero honours an idempotency key for only SIX MINUTES, which no realistic
+    | queue backoff stays inside -- so a job that retries an hour later creates
+    | a SECOND invoice. This ledger is the defence the documentation has always
+    | asked consumers to build for themselves: a row claimed before the request
+    | leaves, confirmed after it lands, with a UNIQUE index that turns a race
+    | between two workers into a database error instead of two invoices.
+    |
+    | Protection applies to a write that names an owner:
+    |
+    |     XeroBridge::invoices()->for($order)->create([...]);
+    |
+    | A write with no owner is still recorded, but cannot be deduplicated --
+    | there is nothing to deduplicate it against.
+    |
+    | OFF by default, and it needs its table published and migrated. A consumer
+    | who upgrades and does nothing gets exactly the behaviour they had.
+    |
+    | ONE RULE. Do not wrap a Xero write in a database transaction. The claim
+    | must be committed before the HTTP request, or it is invisible to other
+    | workers and a rollback erases the record that the write happened. The
+    | package logs a warning if it detects one.
+    |
+    */
+
+    'writes' => [
+        'enabled' => (bool) env('XERO_WRITES_LEDGER', false),
+
+        'table' => env('XERO_WRITES_TABLE', 'xero_write_records'),
+
+        /*
+        | How long a SUCCEEDED row is kept, in days, by xero-bridge:prune.
+        |
+        | Pending rows are NEVER pruned at any age. A pending row means we sent
+        | something to Xero and never learned the outcome; deleting it would
+        | free the claim and allow the duplicate it exists to prevent. They
+        | accumulate visibly on purpose -- that is the pressure to go and look.
+        */
+        'retain_days' => (int) env('XERO_WRITES_RETAIN_DAYS', 90),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | API call capture
+    |--------------------------------------------------------------------------
+    |
+    | Records the request and response of every Xero and LHDN call into
+    | xero_api_calls, so a consuming project can render them on ITS OWN
+    | dashboard. This package deliberately ships no viewer: every project has
+    | its own roles and its own idea of who may see customer data, and a
+    | package cannot know either.
+    |
+    | Read the rows through Peoplelogy\XeroBridge\Models\XeroApiCall and its
+    | scopes rather than by writing SQL against the table. The model is the
+    | supported interface; the columns underneath may change.
+    |
+    | OFF by default, and it needs its table published and migrated. A consumer
+    | who upgrades and does nothing keeps exactly the behaviour they had.
+    |
+    | THIS IS NOT A LEDGER. The row is written AFTER the response, so a worker
+    | killed mid-call leaves no row. "Did that invoice reach Xero?" is answered
+    | by xero_write_records, which is inserted BEFORE the request for that very
+    | reason. Never answer it from here.
+    |
+    */
+
+    'capture' => [
+
+        'enabled' => (bool) env('XERO_CAPTURE', false),
+
+        'table' => env('XERO_CAPTURE_TABLE', 'xero_api_calls'),
+
+        /*
+        | all    -- every call, reads included
+        | writes -- POST/PUT/PATCH/DELETE, plus anything that failed
+        | errors -- failures only
+        |
+        | `writes` is the default because reads are the volume and the flood of
+        | GET /Invoices during a sync answers no question a human asks. A FAILED
+        | call is captured in every mode, including a failed read: a Xero error
+        | can arrive as a 200, so a rule keyed only on the status code would let
+        | a rejected batch through as ordinary read traffic.
+        */
+        'mode' => env('XERO_CAPTURE_MODE', 'writes'),
+
+        /*
+        | Channels, switchable one at a time. A host outside Malaysia has no use
+        | for the MyInvois rows; a host with a strict credential policy may want
+        | the token exchanges off entirely even though every credential in them
+        | is redacted.
+        */
+        'channels' => [
+            'xero.api' => (bool) env('XERO_CAPTURE_XERO_API', true),
+            'xero.identity' => (bool) env('XERO_CAPTURE_XERO_IDENTITY', true),
+            'myinvois.api' => (bool) env('XERO_CAPTURE_MYINVOIS_API', true),
+            'myinvois.token' => (bool) env('XERO_CAPTURE_MYINVOIS_TOKEN', true),
+        ],
+
+        // Days a row is kept, by xero-bridge:prune. Every row is prunable at
+        // its age -- nothing in this table protects against anything, so
+        // keeping it past its useful window is a liability, not a safeguard.
+        'retain_days' => (int) env('XERO_CAPTURE_RETAIN_DAYS', 90),
+
+        // Per body, AFTER redaction. Beyond this the body is replaced by a
+        // marker carrying its size and its top-level keys: a half-written JSON
+        // document is worse than none, because nothing can parse it.
+        'max_body_bytes' => (int) env('XERO_CAPTURE_MAX_BODY_BYTES', 65536),
+
+        /*
+        | Endpoints skipped entirely, matched against the full URL.
+        |
+        | GET /Invoices/{id}/OnlineInvoice returns exactly one field, and that
+        | field is a public unauthenticated capability link: whoever holds it
+        | can view the invoice and, with a payment service configured, pay it.
+        | Redacting the field would store a row containing nothing, so the right
+        | control is to skip the call.
+        */
+        'skip_urls' => [
+            '#/OnlineInvoice(\?|$)#i',
+        ],
+
+        'redact' => [
+
+            /*
+            | What a removed value becomes. A fixed string, not null and not a
+            | deleted key: "we never sent a TaxNumber" and "we sent one and hid
+            | it" are different answers to a real support question.
+            */
+            'placeholder' => env('XERO_CAPTURE_PLACEHOLDER', '[redacted]'),
+
+            /*
+            | ADDED to the list shipped in Support\RedactionPolicy::DEFAULTS.
+            | Matched EXACTLY and case-insensitively, at any depth, in request
+            | and response alike, in bodies, headers and query strings.
+            |
+            | Deltas rather than a literal list on purpose: a project that
+            | published this file today and upgrades in a year would otherwise
+            | silently miss every field name added in between.
+            |
+            | The two most defensible additions for a stricter PDPA posture:
+            |     'phonenumber', 'addressline1'
+            |
+            | And if your organisation types account references into the NZ bank
+            | reference fields:
+            |     'particulars', 'details'
+            */
+            'add' => [],
+
+            /*
+            | REMOVED from that list.
+            |
+            | CREDENTIALS AND BANK DETAILS CANNOT BE REMOVED. Naming them here
+            | does nothing. Support\RedactionPolicy::ALWAYS wins, because two
+            | exceptions promise in writing that nothing this package produces
+            | carries a token, and because "save everything except bank account"
+            | is a requirement rather than a preference -- neither should be
+            | undoable by one line of configuration.
+            |
+            | What you CAN keep: taxnumber, idvalue, onbehalfof, searchterm,
+            | target, xeronetworkkey, onlineinvoiceurl.
+            */
+            'keep' => [],
+
+            // Walk limits. The deepest real Xero path is six; a request payload
+            // built by a host can contain a reference cycle, and the depth cap
+            // is what terminates it.
+            'max_depth' => 24,
+            'max_nodes' => 20000,
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Webhooks
     |--------------------------------------------------------------------------
     |
@@ -212,6 +389,57 @@ return [
         'queue' => env('XERO_WEBHOOK_QUEUE'),
 
         'connection' => env('XERO_WEBHOOK_QUEUE_CONNECTION'),
+
+        /*
+        | How long the uniqueness lock on the envelope job is held, in seconds.
+        |
+        | The controller dispatches the job BEFORE returning its 200, so if the
+        | response misses Xero's five-second budget the job is already queued
+        | when Xero retries -- and without a lock every listener fires twice for
+        | one logical change. This window covers Xero's retries for a single
+        | delivery.
+        |
+        | The lock is only as good as the cache store: `array` and `file` give
+        | no cross-process guarantee, so with several queue workers you want
+        | redis, memcached or database here as well.
+        */
+        'unique_for' => (int) env('XERO_WEBHOOK_UNIQUE_FOR', 900),
+
+        /*
+        | Attempts for the envelope job, TOTAL including the first.
+        |
+        | Before 1.4.0 this was unset, which means Laravel's default of a single
+        | attempt: one failing listener and the whole envelope was lost with no
+        | retry. Backoff is 10s, 30s, 2m, 10m.
+        */
+        'tries' => (int) env('XERO_WEBHOOK_TRIES', 5),
+
+        /*
+        |----------------------------------------------------------------------
+        | Durable replay dedupe
+        |----------------------------------------------------------------------
+        |
+        | The lock above catches a retry storm within minutes. It cannot catch a
+        | replay Xero sends DAYS later: undelivered events are stored for up to
+        | 31 days and replayed in order once your endpoint recovers.
+        |
+        | With this on, and the table published and migrated, each event is
+        | recorded the first time it is dispatched and skipped on every later
+        | delivery. Off means the package behaves exactly as it did before --
+        | your listeners must be idempotent themselves, which they should be
+        | regardless.
+        |
+        | `retain_days` is clamped to a minimum of 32: pruning inside Xero's
+        | 31-day replay window would delete the very rows that make a late
+        | replay detectable, which is the only thing this table is for.
+        */
+        'dedupe' => [
+            'enabled' => (bool) env('XERO_WEBHOOK_DEDUPE', false),
+
+            'table' => env('XERO_WEBHOOK_DEDUPE_TABLE', 'xero_webhook_events'),
+
+            'retain_days' => (int) env('XERO_WEBHOOK_DEDUPE_RETAIN_DAYS', 45),
+        ],
     ],
 
     /*

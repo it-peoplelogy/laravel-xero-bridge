@@ -21,11 +21,20 @@ beforeEach(function () {
         'prefix_indexes' => true,
     ]);
 
+    // BOTH, because MyInvois reads its own database config on purpose -- it is
+    // a different authority and a host may well want it elsewhere. Pointing
+    // only the Xero one here would send the MyInvois table to the default
+    // connection, where the base TestCase has already created it.
     config()->set('xero-bridge.database.connection', 'prefixed');
+    config()->set('myinvois.database.connection', 'prefixed');
 
     foreach (File::allFiles(__DIR__.'/../../database/migrations') as $migration) {
         (include $migration->getRealPath())->up();
     }
+});
+
+it('creates the capture table under the host prefix too', function () {
+    expect(Schema::connection('prefixed')->hasTable('xero_api_calls'))->toBeTrue();
 });
 
 it('lets the host connection apply its own prefix', function () {
@@ -54,3 +63,21 @@ it('honours a custom table name', function () {
 
     expect((new XeroConnection)->getTable())->toBe('custom_xero_connections');
 });
+
+it('prefixes every table the package ships, not just the first', function (string $table) {
+    // One assertion per migration, so a new table cannot quietly hardcode a
+    // prefix or name an index by hand and go unnoticed.
+    $schema = Schema::connection('prefixed');
+
+    expect($schema->hasTable($table))->toBeTrue();
+
+    $physical = DB::connection('prefixed')
+        ->select("select name from sqlite_master where type='table' and name='pips_{$table}'");
+
+    expect($physical)->toHaveCount(1);
+})->with([
+    'xero_connections',
+    'xero_webhook_events',
+    'xero_write_records',
+    'myinvois_validations',
+]);

@@ -844,14 +844,16 @@ class XeroConsoleController extends Controller
      */
     private function actions(): array
     {
-        if (! $this->myInvois->enabled()) {
-            return self::ACTIONS;
+        $actions = self::ACTIONS;
+
+        if ($this->myInvois->enabled()) {
+            $actions += [
+                'myinvois.validate' => ['label' => 'LHDN MyInvois: validate a taxpayer TIN'],
+                'myinvois.forget_token' => ['label' => 'LHDN MyInvois: drop the cached access token', 'writes' => true],
+            ];
         }
 
-        return self::ACTIONS + [
-            'myinvois.validate' => ['label' => 'LHDN MyInvois: validate a taxpayer TIN'],
-            'myinvois.forget_token' => ['label' => 'LHDN MyInvois: drop the cached access token', 'writes' => true],
-        ];
+        return $actions;
     }
 
     /**

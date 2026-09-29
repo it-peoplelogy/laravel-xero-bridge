@@ -8,6 +8,7 @@ use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
+use Peoplelogy\XeroBridge\Capture\ApiCallRecorder;
 use Peoplelogy\XeroBridge\Exceptions\XeroBridgeException;
 use Peoplelogy\XeroBridge\Exceptions\XeroConfigurationException;
 use Peoplelogy\XeroBridge\Exceptions\XeroIdentityUnavailableException;
@@ -31,6 +32,8 @@ use Throwable;
  */
 final class IdentityClient
 {
+    private ?ApiCallRecorder $recorder = null;
+
     public function __construct(
         private readonly HttpFactory $http,
         private readonly XeroConfig $config,
@@ -85,9 +88,48 @@ final class IdentityClient
      */
     public function revoke(string $refreshToken): void
     {
-        $this->request()
+        $body = ['token' => $refreshToken];
+        $started = hrtime(true);
+
+        // The key is the bland word `token` and the value is the long-lived
+        // credential. RedactionPolicy::OAUTH_ONLY catches it on this channel.
+        $response = $this->request()
             ->asForm()
-            ->post($this->config->endpoint('revocation'), ['token' => $refreshToken]);
+            ->post($this->config->endpoint('revocation'), $body);
+
+        $this->capture('POST', $this->config->endpoint('revocation'), $body, $started, $response, null);
+    }
+
+    /**
+     * Hand one identity call to the capture table.
+     *
+     * Both bodies here are credentials end to end, and every field in them is
+     * in the tier configuration cannot switch off. What survives, and is the
+     * point of capturing at all: the status, expires_in, token_type and scope,
+     * which are how an insufficient-scope 401 and a failed refresh are told
+     * apart afterwards.
+     *
+     * @param  array<string, mixed>  $body
+     */
+    private function capture(
+        string $method,
+        string $url,
+        array $body,
+        float $started,
+        ?Response $response,
+        ?Throwable $error,
+    ): void {
+        $this->recorder ??= app(ApiCallRecorder::class);
+
+        $this->recorder->record(
+            channel: 'xero.identity',
+            method: $method,
+            url: $url,
+            requestBody: $body,
+            response: $response,
+            error: $error,
+            startedAt: $started,
+        );
     }
 
     /**
@@ -118,14 +160,22 @@ final class IdentityClient
             throw: false,
         );
 
+        $started = hrtime(true);
+
         try {
-            return $request->asForm()->post($this->config->endpoint('token'), $payload);
+            $response = $request->asForm()->post($this->config->endpoint('token'), $payload);
         } catch (ConnectionException $e) {
+            $this->capture('POST', $this->config->endpoint('token'), $payload, $started, null, $e);
+
             throw XeroIdentityUnavailableException::make(
                 $connectionKey ?? '-',
                 $e->getMessage(),
             );
         }
+
+        $this->capture('POST', $this->config->endpoint('token'), $payload, $started, $response, null);
+
+        return $response;
     }
 
     private function request()

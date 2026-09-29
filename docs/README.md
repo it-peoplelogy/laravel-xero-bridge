@@ -14,6 +14,8 @@ The [project README](../README.md) is the overview; these pages are the detail.
 | [6. Recipes](06-recipes.md) | Complete worked examples, including queued invoice creation and the payment-time buyer-details flow |
 | [7. The test console](07-test-console.md) | The page at `/xero/console` that ships with the package — turning it on and off, who can reach it, the write guard, and every action |
 | [8. MyInvois TIN validation](08-myinvois-tin-validation.md) | Optional, off by default: validating a Malaysian taxpayer's TIN against LHDN's MyInvois API |
+| [9. Persistence](09-persistence.md) | Optional, off by default: duplicate protection for writes, durable webhook replay dedupe, and the MyInvois verdict record |
+| [10. API call capture](10-api-capture.md) | Optional, off by default: every Xero and LHDN request and response recorded into a table your own dashboard can read, with bank details and credentials removed before the insert |
 
 Alongside them, one document written to be **circulated** rather than browsed:
 

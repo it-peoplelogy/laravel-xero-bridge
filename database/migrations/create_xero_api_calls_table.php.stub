@@ -1,0 +1,168 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Database\Schema\Builder;
+use Illuminate\Support\Facades\Schema;
+
+/**
+ * Every Xero and LHDN call this application made, request and response.
+ *
+ * Exists so a consuming project can render the traffic on ITS OWN dashboard.
+ * This package ships no viewer for it -- the schema is the interface, and the
+ * models beside it are the supported way in.
+ *
+ * TWO WARNINGS, both of which have cost someone a weekend somewhere:
+ *
+ *   THIS IS NOT A LEDGER. The row is written AFTER the response, so a worker
+ *   killed mid-call leaves no row at all. "Did that invoice reach Xero?" is
+ *   answered by xero_write_records, which is inserted BEFORE the request
+ *   precisely so it survives that. Never answer it from here.
+ *
+ *   BODIES ARE REDACTED ON THE WAY IN, never on the way out. Bank details and
+ *   credentials are removed before the insert, because a raw row reaches the
+ *   binary log, the nightly backup, the read replica and every SELECT * in a
+ *   support tool. What is stored here is safe to show; that is the whole
+ *   contract, and Support\RedactionPolicy is where it is enforced.
+ */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        $this->schema()->create($this->table(), function (Blueprint $table) {
+            $table->id();
+
+            /*
+             * Which API, and which credential set. Four values today:
+             * xero.api, xero.identity, myinvois.api, myinvois.token.
+             *
+             * Indexed because the first thing any dashboard does is separate
+             * the business traffic from the token traffic.
+             */
+            $table->string('channel', 24)->index();
+
+            /*
+             * The configured Xero connection this went out on. Nullable: the
+             * identity and MyInvois channels have no connection, and a call
+             * made before any organisation is connected still deserves a row.
+             */
+            $table->string('connection_key', 64)->nullable()->index();
+
+            /*
+             * The organisation. Without it a row cannot be attributed in a
+             * multi-org install -- the same customer has a different ContactID
+             * in every connected organisation, so a row with no tenant is
+             * ambiguous rather than merely incomplete.
+             */
+            $table->string('tenant_id', 64)->nullable()->index();
+
+            /*
+             * One logical call, one id -- shared by every wire attempt it took.
+             *
+             * A single invoices()->create() can be more than one HTTP request:
+             * the client replays once after a 401 with a refreshed token. Those
+             * are separate rows with attempt 1 and 2, and this is what puts
+             * them back together. Without it "why did this take two round
+             * trips?" is unanswerable from the table.
+             */
+            $table->string('logical_call_id', 36)->index();
+
+            $table->unsignedTinyInteger('attempt')->default(1);
+
+            $table->string('method', 8);
+
+            /*
+             * REDACTED. The MyInvois TIN is a path segment and Xero `where`
+             * clauses carry customer email addresses, so this column is put
+             * through the redactor exactly like a body. Text, not string: a
+             * filter clause with several conditions outgrows 255 easily.
+             */
+            $table->text('url');
+
+            $table->json('request_headers')->nullable();
+            $table->json('request_body')->nullable();
+
+            /*
+             * Null means the call never got an answer -- a timeout or a DNS
+             * failure -- which is the single most interesting row in the table
+             * and the reason `error` exists beside it.
+             */
+            $table->unsignedSmallInteger('status')->nullable()->index();
+
+            $table->json('response_headers')->nullable();
+
+            /*
+             * Stored only when the response was JSON. A PDF is megabytes of
+             * binary whose rendered content carries the organisation's own bank
+             * details from the branding theme, and nobody debugs a PDF by
+             * reading it out of a database column, so those rows keep
+             * content_type and response_bytes and nothing else.
+             */
+            $table->json('response_body')->nullable();
+            $table->string('content_type', 96)->nullable();
+            $table->unsignedInteger('response_bytes')->nullable();
+
+            $table->unsignedInteger('duration_ms')->nullable();
+
+            // Exception class and message, itself put through the redactor:
+            // a client exception message can quote the URL it failed on.
+            $table->string('error', 500)->nullable();
+
+            /*
+             * Which rules fired on this row. Not decoration -- it is how a
+             * reader tells "we never sent a TaxNumber" from "we sent one and
+             * hid it", which are different answers to a real support question.
+             */
+            $table->json('redacted_keys')->nullable();
+
+            /*
+             * Lifted out of the headers into their own columns, because both
+             * are join keys and no dashboard should have to parse JSON to use
+             * them: idempotency_key joins to xero_write_records and is the only
+             * way to tell a retry from a genuine duplicate; correlation_id is
+             * the id LHDN support asks for and cannot be recovered afterwards.
+             */
+            $table->string('idempotency_key', 128)->nullable()->index();
+            $table->string('correlation_id', 64)->nullable()->index();
+
+            /*
+             * The consuming project's own record, when it declared one. This
+             * is what makes a dashboard possible at all: without it a project
+             * cannot join these rows to its orders or its customers.
+             *
+             * A plain string rather than nullableMorphs(), so a host using UUID
+             * or ULID primary keys is not forced into an integer column.
+             */
+            $table->string('owner_type', 191)->nullable();
+            $table->string('owner_id', 64)->nullable();
+
+            $table->timestamp('created_at')->index();
+
+            $table->index(['owner_type', 'owner_id']);
+            $table->index(['channel', 'status']);
+        });
+    }
+
+    public function down(): void
+    {
+        $this->schema()->dropIfExists($this->table());
+    }
+
+    /**
+     * Resolve through the configured connection so the HOST's prefix applies.
+     * pips sets prefix 'pips_' with prefix_indexes on its mysql connection, so
+     * this creates pips_xero_api_calls there. Indexes are deliberately left
+     * unnamed for the same reason.
+     */
+    private function schema(): Builder
+    {
+        return Schema::connection(config('xero-bridge.database.connection'));
+    }
+
+    private function table(): string
+    {
+        return config('xero-bridge.capture.table', 'xero_api_calls');
+    }
+};

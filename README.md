@@ -391,6 +391,16 @@ MYINVOIS_ENVIRONMENT=sandbox
 # From the MyInvois portal, under the taxpayer's ERP registration.
 MYINVOIS_CLIENT_ID=
 MYINVOIS_CLIENT_SECRET=
+
+# --- API call capture (off by default) --------------------------------------
+# Records every Xero and LHDN request and response into xero_api_calls, for
+# YOUR dashboard to read. Needs the migrations published and run. Bank details
+# and credentials are removed before the insert and cannot be switched back on.
+XERO_CAPTURE=false
+# all | writes | errors. `writes` skips successful reads, never a failure.
+XERO_CAPTURE_MODE=writes
+# Pruned by xero-bridge:prune -- schedule it, or the table grows forever.
+XERO_CAPTURE_RETAIN_DAYS=90
 ```
 
 ---
@@ -552,6 +562,63 @@ With it on, the [test console](docs/07-test-console.md) grows a panel for runnin
 
 Full detail, including caching, the error contract and troubleshooting, is in
 [the MyInvois documentation](docs/08-myinvois-tin-validation.md).
+
+---
+
+## API call capture (off by default)
+
+Every Xero and LHDN request and response, recorded into a table **your own application** can read and
+render. The package ships no viewer for it: your project has its own roles and its own idea of who
+may look at customer data, and a package cannot know either. `/xero/console` is unchanged and still a
+developer tool.
+
+```bash
+php artisan vendor:publish --tag=xero-bridge-migrations
+php artisan migrate
+```
+
+```dotenv
+XERO_CAPTURE=true
+```
+
+Then read it through the model, and schedule the prune:
+
+```php
+use Peoplelogy\XeroBridge\Models\XeroApiCall;
+
+XeroApiCall::forOwner($order)->latest()->get();   // everything we sent for one of YOUR records
+XeroApiCall::failed()->latest()->paginate(50);    // what went wrong, including calls that never answered
+```
+
+```php
+Schedule::command('xero-bridge:prune')->dailyAt('02:00');   // 90-day retention by default
+```
+
+To attribute calls to one of your records, name it:
+
+```php
+app(ApiCallRecorder::class)->forOwner($order, fn () => XeroBridge::invoices()->create([...]));
+```
+
+**What never reaches the table.** Redaction happens before the insert, never on the way out — a raw
+row would reach the binary log, the nightly backup and every `SELECT *` in a support tool. Removed:
+the bearer token and every other credential, your organisation's bank account numbers, your
+customers' (`BankAccountDetails`, echoed back on every contact read), the whole `BatchPayments`
+block, and the MyInvois TIN and identifier, which live in the URL path and query string rather than
+in any body. **Credentials and bank fields cannot be switched back on by configuration.**
+
+**What is deliberately kept**, because the alternative is a table that is safe and useless:
+`Contact.AccountNumber` — which is *not* a bank account, it is normally your own customer code —
+plus `BankAccountType`, `Account.Code`, `CompanyNumber`, `correlationId`, `Idempotency-Key` and
+`Xero-tenant-id`. `Contact.TaxNumber` is masked to its last four so a row still joins to its
+`myinvois_validations` verdict.
+
+One caveat worth knowing: this is **not a ledger**. The row is written after the response, so a
+worker killed mid-call leaves no row. "Did that invoice reach Xero?" is answered by
+`xero_write_records`, which is inserted *before* the request for exactly that reason.
+
+Full detail, including every field in the exclusion list and why, is in
+[the capture documentation](docs/10-api-capture.md).
 
 ---
 

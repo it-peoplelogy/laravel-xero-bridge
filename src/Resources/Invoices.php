@@ -15,6 +15,7 @@ use Peoplelogy\XeroBridge\Filters\InvoiceFilter;
 use Peoplelogy\XeroBridge\Support\BatchResult;
 use Peoplelogy\XeroBridge\Support\IdempotencyKey;
 use Peoplelogy\XeroBridge\Support\InvoiceTransitions;
+use Throwable;
 
 class Invoices extends Resource
 {
@@ -64,13 +65,27 @@ class Invoices extends Resource
         $key = $idempotencyKey ?? IdempotencyKey::generate();
         IdempotencyKey::assertValid($key);
 
-        $body = $this->client->post(
-            $this->endpoint(),
-            ['Invoices' => [$invoice]],
-            ['Idempotency-Key' => $key],
-        );
+        // Claimed BEFORE the request leaves. Xero honours an idempotency key
+        // for only six minutes; this is the defence that outlives that.
+        $claim = $this->claimWrite('invoice.create', $key);
+
+        try {
+            $body = $this->client->post(
+                $this->endpoint(),
+                ['Invoices' => [$invoice]],
+                ['Idempotency-Key' => $key],
+            );
+        } catch (Throwable $e) {
+            // Only a proven non-creation frees the claim. Anything else leaves
+            // it pending, because re-sending could duplicate a real invoice.
+            $this->releaseWriteOnProvenFailure($claim, $e);
+
+            throw $e;
+        }
 
         $created = $this->unwrapFirst($body) ?? [];
+
+        $this->confirmWrite($claim, $created);
 
         InvoiceCreated::dispatch($this->connectionKey, $created, $key);
 

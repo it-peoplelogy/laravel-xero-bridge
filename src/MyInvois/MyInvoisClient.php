@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace Peoplelogy\XeroBridge\MyInvois;
 
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
+use Peoplelogy\XeroBridge\Capture\ApiCallRecorder;
 use Peoplelogy\XeroBridge\Support\Clock;
+use Throwable;
 
 /**
  * LHDN Malaysia (HASiL) MyInvois -- Validate Taxpayer's TIN.
@@ -51,10 +54,21 @@ final class MyInvoisClient
     /** @var array<string, int|string|null>|null */
     private ?array $lastRateLimit = null;
 
+    /** LHDN's own request id for the last call. Support asks for this. */
+    private ?string $lastCorrelationId = null;
+
+    /** The buyer record a verdict is about, when the caller named one. */
+    private ?Model $owner = null;
+
+    private ?ApiCallRecorder $recorder = null;
+
     public function __construct(
         private readonly MyInvoisConfig $config,
         private readonly HttpFactory $http,
         private readonly CacheFactory $cache,
+        // Nullable and last, so anything constructing this by hand keeps
+        // working across the upgrade.
+        private readonly ?MyInvoisAudit $audit = null,
     ) {}
 
     /**
@@ -104,6 +118,18 @@ final class MyInvoisClient
 
         $matched = $this->sendValidate($tin, $type, $idValue);
 
+        // Recorded on BOTH verdicts: "not found" is as much an answer as
+        // "found", and an audit that only holds the yeses is not an audit.
+        $this->audit?->record(
+            $tin,
+            $type,
+            $idValue,
+            $matched,
+            $matched ? 200 : 404,
+            $this->lastCorrelationId,
+            $this->owner,
+        );
+
         $this->rememberResult($cacheKey, $matched);
 
         return $matched;
@@ -122,6 +148,31 @@ final class MyInvoisClient
     public function lastRateLimit(): ?array
     {
         return $this->lastRateLimit;
+    }
+
+    /**
+     * Attach the buyer record this check is about, so the verdict can be found
+     * from it later -- and erased with it.
+     *
+     *     MyInvois::for($customer)->validate($tin, IdType::BRN, $brn);
+     */
+    public function for(Model $owner): self
+    {
+        $clone = clone $this;
+        $clone->owner = $owner;
+
+        return $clone;
+    }
+
+    /**
+     * LHDN's correlationId for the last validation, success or not.
+     *
+     * Worth storing alongside a verdict: it is what LHDN support asks for when
+     * you need them to explain an answer, and it cannot be recovered later.
+     */
+    public function lastCorrelationId(): ?string
+    {
+        return $this->lastCorrelationId;
     }
 
     /**
@@ -151,6 +202,12 @@ final class MyInvoisClient
 
         $this->lastRateLimit = $this->readRateLimit($response);
 
+        // Captured on the VERDICT paths too, not only when building an
+        // exception. correlationId is the one id LHDN support asks for, and
+        // reading it only on failure threw it away for every answer that
+        // actually meant something.
+        $this->lastCorrelationId = $response->header('correlationId') ?: null;
+
         if ($response->status() === 200) {
             return true;
         }
@@ -172,13 +229,61 @@ final class MyInvoisClient
             $headers['onbehalfof'] = $onBehalfOf;
         }
 
-        return $this->request()
-            ->withToken($token)
-            ->withHeaders($headers)
-            ->get($this->config->validateUrl($tin), [
-                'idType' => $type->value,
-                'idValue' => $idValue,
-            ]);
+        $query = ['idType' => $type->value, 'idValue' => $idValue];
+        $url = $this->config->validateUrl($tin);
+        $started = hrtime(true);
+
+        try {
+            $response = $this->request()
+                ->withToken($token)
+                ->withHeaders($headers)
+                ->get($url, $query);
+        } catch (Throwable $e) {
+            $this->capture('myinvois.api', 'GET', $url, $headers, $query, null, $started, null, $e);
+
+            throw $e;
+        }
+
+        $this->capture('myinvois.api', 'GET', $url, $headers, $query, null, $started, $response, null);
+
+        return $response;
+    }
+
+    /**
+     * Hand one call to the capture table, if the host turned it on.
+     *
+     * The TIN sits in the URL PATH here, which no key rule can reach. The
+     * redactor's URL patterns mask it, and the same patterns are applied to any
+     * exception message, because a client exception quotes the URL it failed on.
+     *
+     * @param  array<string, mixed>  $headers
+     * @param  array<string, mixed>  $query
+     * @param  array<string, mixed>|null  $body
+     */
+    private function capture(
+        string $channel,
+        string $method,
+        string $url,
+        array $headers,
+        array $query,
+        ?array $body,
+        float $started,
+        ?Response $response,
+        ?Throwable $error,
+    ): void {
+        $this->recorder ??= app(ApiCallRecorder::class);
+
+        $this->recorder->record(
+            channel: $channel,
+            method: $method,
+            url: $url,
+            requestHeaders: $headers,
+            requestQuery: $query,
+            requestBody: $body,
+            response: $response,
+            error: $error,
+            startedAt: $started,
+        );
     }
 
     /*
@@ -212,12 +317,21 @@ final class MyInvoisClient
             return $cached;
         }
 
-        $response = $this->request()->asForm()->post($this->config->tokenUrl(), [
+        $form = [
             'grant_type' => 'client_credentials',
             'client_id' => $this->config->clientId(),
             'client_secret' => $this->config->clientSecret(),
             'scope' => self::SCOPE,
-        ]);
+        ];
+
+        $started = hrtime(true);
+
+        // Here the secret is in the BODY, not a header, so it reaches the
+        // recorder and is removed there. RedactionPolicy::ALWAYS holds it,
+        // which no configuration can undo.
+        $response = $this->request()->asForm()->post($this->config->tokenUrl(), $form);
+
+        $this->capture('myinvois.token', 'POST', $this->config->tokenUrl(), [], [], $form, $started, $response, null);
 
         if (! $response->successful()) {
             throw MyInvoisException::tokenRejected($response);

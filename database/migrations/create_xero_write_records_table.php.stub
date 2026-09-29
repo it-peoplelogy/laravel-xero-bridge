@@ -1,0 +1,119 @@
+<?php
+
+declare(strict_types=1);
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Database\Schema\Builder;
+use Illuminate\Support\Facades\Schema;
+
+/**
+ * The write-dedupe ledger, and as a side effect the map from a consumer's own
+ * record to the Xero object created for it.
+ *
+ * This discharges the obligation the package documentation repeats in nine
+ * separate places: Xero retains an idempotency key for only SIX MINUTES, which
+ * no realistic queue backoff stays inside, so the durable defence against
+ * duplicates is a local record that the write already happened.
+ */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        $this->schema()->create($this->table(), function (Blueprint $table) {
+            $table->id();
+
+            /*
+             * The claim, and the whole reason this table exists.
+             *
+             * sha256 of connection_key|operation|owner_type|owner_id|reference.
+             * UNIQUE, and NOT nullable: a nullable unique column would let two
+             * rows through, because every engine this package supports treats
+             * NULLs as distinct in a unique index. Unowned writes are given a
+             * random claim key instead, so they are RECORDED without ever
+             * deduplicating -- one column, two modes, no second code path.
+             */
+            $table->string('claim_key', 64)->unique();
+
+            // The application-side slot, matching xero_connections.key. A Xero
+            // ContactID is only meaningful within one organisation, so a
+            // multi-organisation consumer needs this in the row.
+            $table->string('connection_key', 64)->index();
+
+            // 'invoice.create' | 'contact.create' | 'payment.create' -- what
+            // was written, so one table serves every write path.
+            $table->string('operation', 32);
+
+            /*
+             * The CONSUMER's own record: an Order, an Enrolment, a Proposal.
+             * Polymorphic, so the package never needs to know the host schema.
+             *
+             * Deliberately NOT nullableMorphs(): that hardcodes an
+             * unsignedBigInteger id, and host applications use UUIDs and ULIDs
+             * too. A string holds all three.
+             */
+            $table->string('owner_type', 191)->nullable();
+            $table->string('owner_id', 64)->nullable();
+
+            /*
+             * Free-form, and part of the claim key. One order can legitimately
+             * need a deposit invoice AND a final invoice; two references make
+             * them two claims rather than the second being suppressed as a
+             * duplicate of the first.
+             */
+            $table->string('reference', 191)->nullable();
+
+            /*
+             * pending -> succeeded. There is no 'failed'.
+             *
+             * A proven non-creation (Xero rejected the payload outright)
+             * DELETES the row and frees the slot for a corrected retry. Every
+             * other failure -- a timeout, a 5xx, a worker killed between the
+             * 2xx and the update -- leaves it pending, because we cannot prove
+             * nothing was created and re-sending could duplicate it.
+             *
+             * pending therefore BLOCKS AT ANY AGE, on purpose. The failure is
+             * redirected from "a duplicate invoice in a customer's ledger",
+             * which is money and is discovered by the customer, to "one stuck
+             * row", which a human clears and xero-bridge:status surfaces.
+             */
+            $table->string('status', 16)->default('pending')->index();
+
+            // Xero's own identifiers, filled in on success.
+            $table->string('xero_id', 64)->nullable()->index();
+            $table->string('xero_number', 64)->nullable();
+            $table->string('xero_status', 32)->nullable();
+
+            // Sent to Xero on the write, for the six minutes it honours it.
+            $table->string('idempotency_key', 128)->nullable();
+
+            $table->timestamp('claimed_at')->index();
+            $table->timestamp('succeeded_at')->nullable();
+
+            // Answers "what has this order already had written for it?"
+            // without scanning, which is the query a consumer actually makes.
+            $table->index(['owner_type', 'owner_id']);
+        });
+    }
+
+    public function down(): void
+    {
+        $this->schema()->dropIfExists($this->table());
+    }
+
+    /**
+     * Resolve through the configured connection so the HOST's prefix applies.
+     * pips sets prefix 'pips_' with prefix_indexes on its mysql connection, so
+     * this creates pips_xero_write_records there. Indexes are deliberately
+     * left unnamed for the same reason.
+     */
+    private function schema(): Builder
+    {
+        return Schema::connection(config('xero-bridge.database.connection'));
+    }
+
+    private function table(): string
+    {
+        return config('xero-bridge.writes.table', 'xero_write_records');
+    }
+};

@@ -9,12 +9,15 @@ use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Http\Client\Factory as HttpFactory;
+use Peoplelogy\XeroBridge\Capture\ApiCallRecorder;
 use Peoplelogy\XeroBridge\Client\RetryPolicy;
 use Peoplelogy\XeroBridge\Commands\InstallCommand;
+use Peoplelogy\XeroBridge\Commands\PruneCommand;
 use Peoplelogy\XeroBridge\Commands\RefreshTokensCommand;
 use Peoplelogy\XeroBridge\Commands\StatusCommand;
 use Peoplelogy\XeroBridge\Contracts\ConnectionRepository;
 use Peoplelogy\XeroBridge\Http\Middleware\EnsureConsoleEnabled;
+use Peoplelogy\XeroBridge\MyInvois\MyInvoisAudit;
 use Peoplelogy\XeroBridge\MyInvois\MyInvoisClient;
 use Peoplelogy\XeroBridge\MyInvois\MyInvoisConfig;
 use Peoplelogy\XeroBridge\OAuth\AuthorizationUrlBuilder;
@@ -24,7 +27,11 @@ use Peoplelogy\XeroBridge\OAuth\TokenManager;
 use Peoplelogy\XeroBridge\Repositories\EloquentConnectionRepository;
 use Peoplelogy\XeroBridge\Support\ClientRegistry;
 use Peoplelogy\XeroBridge\Support\Diagnostics;
+use Peoplelogy\XeroBridge\Support\RedactionPolicy;
+use Peoplelogy\XeroBridge\Support\TableGuard;
 use Peoplelogy\XeroBridge\Support\XeroConfig;
+use Peoplelogy\XeroBridge\Webhooks\WebhookEventRecorder;
+use Peoplelogy\XeroBridge\Writes\XeroWriteRecorder;
 use Psr\Log\LoggerInterface;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
@@ -39,11 +46,19 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
             // Namespace `xero-bridge::`, publish tag `xero-bridge-views`. The
             // only view is the test console, which needs no publishing to work.
             ->hasViews()
+            // Each ships as a .php.stub and is published deliberately. A
+            // consumer who upgrades and never runs vendor:publish gets no new
+            // tables and no behaviour change -- TableGuard keeps the recorders
+            // silent until the table actually exists.
             ->hasMigration('create_xero_connections_table')
+            ->hasMigration('create_xero_webhook_events_table')
+            ->hasMigration('create_xero_write_records_table')
+            ->hasMigration('create_xero_api_calls_table')
             ->hasCommands([
                 InstallCommand::class,
                 StatusCommand::class,
                 RefreshTokensCommand::class,
+                PruneCommand::class,
             ]);
     }
 
@@ -101,6 +116,52 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
             $app->make(XeroConfig::class),
         ));
 
+        // One memoised hasTable() per table per process. Every recorder goes
+        // through it, which is what lets a consumer upgrade without migrating.
+        $this->app->singleton(TableGuard::class, fn ($app) => new TableGuard(
+            $app->make(LoggerInterface::class),
+        ));
+
+        // Built from ConfigRepository rather than XeroConfig, so the
+        // MyInvois module can depend on the recorder without breaching the
+        // arch rule that keeps LHDN and Xero apart.
+        //
+        // `capture` is a TOP-LEVEL key, which is what makes it safe to add in a
+        // point release: mergeConfigFrom merges one level deep, so a consumer
+        // running a config file published before this version still receives
+        // the whole block from the package.
+        $this->app->singleton(RedactionPolicy::class, function ($app) {
+            $config = $app->make(ConfigRepository::class);
+
+            return new RedactionPolicy(
+                add: (array) $config->get('xero-bridge.capture.redact.add', []),
+                keep: (array) $config->get('xero-bridge.capture.redact.keep', []),
+                placeholder: (string) $config->get('xero-bridge.capture.redact.placeholder', '[redacted]'),
+                skipUrls: (array) $config->get('xero-bridge.capture.skip_urls', []),
+                maxDepth: (int) $config->get('xero-bridge.capture.redact.max_depth', 24),
+                maxNodes: (int) $config->get('xero-bridge.capture.redact.max_nodes', 20000),
+            );
+        });
+
+        $this->app->singleton(ApiCallRecorder::class, fn ($app) => new ApiCallRecorder(
+            $app->make(ConfigRepository::class),
+            $app->make(RedactionPolicy::class),
+            $app->make(TableGuard::class),
+            $app->make(LoggerInterface::class),
+        ));
+
+        $this->app->singleton(XeroWriteRecorder::class, fn ($app) => new XeroWriteRecorder(
+            $app->make(XeroConfig::class),
+            $app->make(TableGuard::class),
+            $app->make(LoggerInterface::class),
+        ));
+
+        $this->app->singleton(WebhookEventRecorder::class, fn ($app) => new WebhookEventRecorder(
+            $app->make(XeroConfig::class),
+            $app->make(TableGuard::class),
+            $app->make(LoggerInterface::class),
+        ));
+
         // Shared by xero-bridge:status and the test console, so the two can
         // never disagree about what "healthy" means.
         $this->app->singleton(Diagnostics::class, fn ($app) => new Diagnostics(
@@ -139,10 +200,17 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
             $app->make(ConfigRepository::class),
         ));
 
+        $this->app->singleton(MyInvoisAudit::class, fn ($app) => new MyInvoisAudit(
+            $app->make(MyInvoisConfig::class),
+            $app->make(TableGuard::class),
+            $app->make(LoggerInterface::class),
+        ));
+
         $this->app->singleton(MyInvoisClient::class, fn ($app) => new MyInvoisClient(
             $app->make(MyInvoisConfig::class),
             $app->make(HttpFactory::class),
             $app->make(CacheFactory::class),
+            $app->make(MyInvoisAudit::class),
         ));
     }
 
@@ -178,6 +246,17 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
             $this->publishes(
                 [__DIR__.'/../config/myinvois.php' => config_path('myinvois.php')],
                 'myinvois-config',
+            );
+
+            // Its own tag as well, so publishing the Xero migrations never
+            // drags a Malaysian tax table into a database that has no use
+            // for one.
+            $this->publishes(
+                [__DIR__.'/../database/migrations/create_myinvois_validations_table.php.stub' => $this->generateMigrationName(
+                    'create_myinvois_validations_table',
+                    now()->addSecond(),
+                )],
+                'myinvois-migrations',
             );
         }
     }

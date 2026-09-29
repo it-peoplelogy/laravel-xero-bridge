@@ -145,6 +145,58 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Verdict record
+    |--------------------------------------------------------------------------
+    |
+    | A durable record of what LHDN said about a buyer, and when.
+    |
+    | LHDN's own guidance is to validate "when the buyer entity is being defined
+    | in your ERP system" and then reflect the result there rather than calling
+    | again -- they treat repeated calls as malicious against a 60-per-minute
+    | budget. A cache evaporates; this does not.
+    |
+    | WHAT IT STORES, AND WHAT IT DELIBERATELY DOES NOT. The TIN and the
+    | identifier are NOT stored. They appear only as a keyed HMAC, because a
+    | plain hash of a twelve-digit registration number is exhausted on a laptop
+    | in under a second -- hashing alone would be theatre. Readable columns are
+    | the id TYPE, the last four characters of the TIN, the verdict, the status,
+    | LHDN's correlation id, the environment and the rules version.
+    |
+    | THE COST, SAID PLAINLY: the HMAC key is derived from your application key.
+    | Rotate that and every stored hash becomes unmatchable -- old rows orphan,
+    | and the next check writes a new one. That is the price of the identifier
+    | being genuinely unrecoverable from this table.
+    |
+    | OFF by default, and it needs its table published and migrated.
+    |
+    */
+
+    'audit' => [
+        'enabled' => (bool) env('MYINVOIS_AUDIT', false),
+
+        'table' => env('MYINVOIS_AUDIT_TABLE', 'myinvois_validations'),
+
+        /*
+        | Days a verdict is kept after it was last checked.
+        |
+        | Data minimisation, not volume control -- one row per subject means the
+        | table cannot run away. The default is a little over a year, so an
+        | annual review still finds last year's answer.
+        |
+        | Note this is NOT a statutory retention period. Malaysian tax law
+        | requires seven years of sufficient records, but the artefact that
+        | satisfies it is the validated e-Invoice itself, which already carries
+        | the buyer's TIN. Nothing requires you to evidence the validation CALL.
+        */
+        'retain_days' => (int) env('MYINVOIS_AUDIT_RETAIN_DAYS', 400),
+    ],
+
+    'database' => [
+        'connection' => env('MYINVOIS_DB_CONNECTION'),   // null => default connection
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | HTTP
     |--------------------------------------------------------------------------
     |

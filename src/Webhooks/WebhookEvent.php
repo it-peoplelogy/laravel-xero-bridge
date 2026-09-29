@@ -85,6 +85,35 @@ final class WebhookEvent
         return XeroDate::parse($this->eventDateUtc);
     }
 
+    /**
+     * A stable identity for this logical event, for deduplicating replays.
+     *
+     * Xero stores undelivered events for up to 31 days and replays them, so
+     * the same change arrives more than once -- after an outage, after a
+     * retry, and after a deployment that briefly 502s.
+     *
+     * DO NOT use the envelope's `entropy` field for this. It DIFFERS between
+     * deliveries of the same logical event, which makes it worse than useless
+     * as a key: every replay would look new. It exists to vary the payload
+     * signature, not to identify the event.
+     *
+     * The four parts each earn their place. `tenantId` because the same
+     * resource id can exist in two connected organisations. `resourceId` and
+     * `eventType` because a CREATE and a later UPDATE of one invoice are
+     * different events. `eventDateUtc` because Xero genuinely sends the same
+     * resource again when it changes again, and that is a new event rather
+     * than a replay -- it is millisecond-precise, so it separates them.
+     */
+    public function dedupeKey(): string
+    {
+        return hash('sha256', implode('|', [
+            $this->tenantId,
+            $this->resourceId,
+            $this->eventType,
+            $this->eventDateUtc,
+        ]));
+    }
+
     /** @return array<string, mixed> */
     public function toArray(): array
     {

@@ -9,6 +9,7 @@ use InvalidArgumentException;
 use Peoplelogy\XeroBridge\Exceptions\XeroBridgeException;
 use Peoplelogy\XeroBridge\Support\XeroDate;
 use Psr\Log\LoggerInterface;
+use Throwable;
 
 /**
  * Payments against invoices.
@@ -45,9 +46,19 @@ class Payments extends Resource
             $payment['Date'] = XeroDate::toApiDate($payment['Date']);
         }
 
-        $created = $this->unwrapFirst(
-            $this->client->post($this->endpoint(), ['Payments' => [$payment]])
-        ) ?? [];
+        $claim = $this->claimWrite('payment.create');
+
+        try {
+            $body = $this->client->post($this->endpoint(), ['Payments' => [$payment]]);
+        } catch (Throwable $e) {
+            $this->releaseWriteOnProvenFailure($claim, $e);
+
+            throw $e;
+        }
+
+        $created = $this->unwrapFirst($body) ?? [];
+
+        $this->confirmWrite($claim, $created);
 
         $this->reportWarnings($created);
 
