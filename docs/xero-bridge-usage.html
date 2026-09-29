@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Using peoplelogy/laravel-xero-bridge</title>
+<style>
+:root {
+    --ink: #1b1f24;
+    --muted: #5b6672;
+    --faint: #8a939e;
+    --rule: #e3e7ec;
+    --accent: #0b6e8f;
+    --accent-soft: #f0f8fb;
+    --code-bg: #f6f8fa;
+    --code-ink: #1b1f24;
+    --warn-bg: #fff8e6;
+    --warn-rule: #e0b44a;
+    --page: #ffffff;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+    margin: 0;
+    background: #eef1f4;
+    color: var(--ink);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.sheet {
+    max-width: 860px;
+    margin: 32px auto 64px;
+    padding: 56px 64px 72px;
+    background: var(--page);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+}
+
+/* ---------- type ---------- */
+
+h1, h2, h3, h4 { line-height: 1.25; font-weight: 650; }
+
+h1 {
+    margin: 0 0 6px;
+    font-size: 30px;
+    letter-spacing: -0.015em;
+}
+
+h2 {
+    margin: 44px 0 14px;
+    padding-bottom: 8px;
+    font-size: 21px;
+    border-bottom: 2px solid var(--rule);
+    letter-spacing: -0.01em;
+}
+
+h3 {
+    margin: 30px 0 10px;
+    font-size: 16.5px;
+    color: var(--accent);
+}
+
+p { margin: 0 0 14px; }
+
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(11,110,143,.28); }
+a:hover { border-bottom-color: var(--accent); }
+
+ul, ol { margin: 0 0 14px; padding-left: 24px; }
+li { margin-bottom: 6px; }
+li > ul, li > ol { margin-top: 6px; }
+
+strong { font-weight: 650; }
+
+hr { border: 0; border-top: 1px solid var(--rule); margin: 36px 0; }
+
+/* ---------- the masthead ---------- */
+
+.masthead {
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 3px solid var(--ink);
+}
+.masthead .kicker {
+    font-size: 11px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 10px;
+}
+.masthead .meta {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+/* ---------- code ---------- */
+
+code, pre, kbd {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+:not(pre) > code {
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: .875em;
+    white-space: nowrap;
+}
+
+pre {
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    border-radius: 5px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 0 0 16px;
+    font-size: 13px;
+    line-height: 1.55;
+}
+pre code {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
+    white-space: pre;
+    color: var(--code-ink);
+}
+
+/* ---------- tables ---------- */
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 18px;
+    font-size: 14px;
+}
+th, td {
+    text-align: left;
+    vertical-align: top;
+    padding: 8px 11px;
+    border: 1px solid var(--rule);
+}
+th {
+    background: var(--accent-soft);
+    font-weight: 650;
+    color: var(--ink);
+}
+tbody tr:nth-child(even) { background: #fafbfc; }
+td code, th code { white-space: normal; }
+
+/* ---------- blockquote callouts ---------- */
+
+blockquote {
+    margin: 0 0 18px;
+    padding: 14px 18px;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-rule);
+    border-left: 4px solid var(--warn-rule);
+    border-radius: 5px;
+}
+blockquote > :last-child { margin-bottom: 0; }
+blockquote h3 {
+    margin: 0 0 8px;
+    color: #8a5b00;
+    font-size: 15px;
+}
+
+/* ---------- print ---------- */
+
+@page {
+    size: A4;
+    margin: 16mm 14mm 18mm;
+}
+
+@media print {
+    body { background: #fff; font-size: 10.5pt; line-height: 1.5; }
+
+    .sheet {
+        max-width: none;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+    }
+
+    a { color: var(--ink); border-bottom: 0; }
+
+    /* Deliberately NO css grid anywhere: a grid container will not paginate,
+       and everything past page one silently disappears. */
+
+    h1, h2, h3 { break-after: avoid-page; page-break-after: avoid; }
+    h2 { margin-top: 26px; font-size: 15pt; }
+    h3 { margin-top: 18px; font-size: 11.5pt; }
+
+    pre, blockquote, table { break-inside: avoid-page; page-break-inside: avoid; }
+    tr, li { break-inside: avoid-page; page-break-inside: avoid; }
+
+    pre { font-size: 8.6pt; background: #f6f8fa !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    th { background: var(--accent-soft) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    blockquote { background: var(--warn-bg) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    tbody tr:nth-child(even) { background: #fafbfc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+    table { font-size: 9pt; }
+    :not(pre) > code { font-size: .86em; background: #f6f8fa !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+    /* A long code line must wrap on paper -- there is no horizontal scroll. */
+    pre code { white-space: pre-wrap; word-break: break-word; }
+}
+</style>
+</head>
+<body>
+<div class="sheet">
+<div class="masthead">
+  <div class="kicker">Developer reference</div>
+  <div class="meta">Generated 29 September 2026 &middot; package version v1.3.0</div>
+</div>
+<h1>Using <code>peoplelogy/laravel-xero-bridge</code></h1>
+<p>A practical reference for the six Xero flows most applications need: how to call each one,
+what to pass, what comes back, and what goes wrong.</p>
+<p>It covers the package only. Nothing here assumes a particular application, database or domain
+model — the package deliberately contains no bookkeeping logic, so <em>when</em> to raise an invoice and
+<em>what</em> goes on it stay yours to decide.</p>
+<p>Every flow below can be run by hand, against a real Xero organisation, from the package’s own test
+console at <strong><code>/xero/console</code></strong>. It is there as soon as the package is installed, in every
+environment except production, and its actions map one-to-one onto the flows in this document — so
+the quickest way to understand a flow is usually to run it there and read the JSON it returns.
+Writes are refused unless the connected organisation is a Xero Demo Company or explicitly
+allow-listed.</p>
+<blockquote>
+<p><strong>Version note.</strong> Written against <code>peoplelogy/laravel-xero-bridge</code> v1.3.0. Method signatures are
+read from the package source; request and response samples are reproduced from the package's own
+docs in this same directory, which are the authority wherever the two
+disagree. The GUIDs and figures in them are illustrative.</p>
+</blockquote>
+<hr />
+<h2 id="contents">Contents</h2>
+<ol>
+<li><a href="#the-calling-mechanism">The calling mechanism</a></li>
+<li><a href="#flow-1--first-or-create-a-contact">Flow 1 — first or create a contact</a></li>
+<li><a href="#flow-21--create-a-draft-invoice">Flow 2.1 — create a DRAFT invoice</a></li>
+<li><a href="#flow-22--create-an-invoice-that-ends-up-paid">Flow 2.2 — create an invoice that ends up PAID</a></li>
+<li><a href="#flow-3--tin-brn-cc-list-then-send">Flow 3 — TIN, BRN, CC list, then send</a></li>
+<li><a href="#flow-4--find-one-invoice">Flow 4 — find one invoice</a></li>
+<li><a href="#flow-5--find-a-contact">Flow 5 — find a contact</a></li>
+<li><a href="#flow-6--list-invoices">Flow 6 — list invoices</a></li>
+<li><a href="#error-handling">Error handling</a></li>
+<li><a href="#things-that-differ-per-organisation">Things that differ per organisation</a></li>
+</ol>
+<hr />
+<h2 id="the-calling-mechanism">The calling mechanism</h2>
+<h3 id="the-namespace">The namespace</h3>
+<p>The package autoloads PSR-4 from a single root:</p>
+<pre><code>Peoplelogy\XeroBridge\   →   vendor/peoplelogy/laravel-xero-bridge/src/
+</code></pre>
+<p>So every class below is <code>Peoplelogy\XeroBridge\</code> plus its path — <code>Filters\InvoiceFilter</code> is
+<code>Peoplelogy\XeroBridge\Filters\InvoiceFilter</code>, and so on. The service provider is auto-discovered;
+there is nothing to register in <code>bootstrap/providers.php</code>.</p>
+<h3 id="three-ways-to-reach-it">Three ways to reach it</h3>
+<p><strong>1. Import the facade — the usual choice.</strong></p>
+<pre><code class="language-php">namespace App\Services\Xero;
+
+use Peoplelogy\XeroBridge\Facades\XeroBridge;
+
+class InvoiceWriter
+{
+    public function create(): array
+    {
+        return XeroBridge::invoices()-&gt;create([...]);
+    }
+}
+</code></pre>
+<p><strong>2. The global alias</strong>, registered by the package as <code>XeroBridge</code>. No import, but it lives in the
+<strong>root</strong> namespace:</p>
+<pre><code class="language-php">\XeroBridge::invoices()-&gt;create([...]);   // note the leading backslash
+</code></pre>
+<blockquote>
+<p><strong>The mistake everybody makes once.</strong> Inside a namespaced class, writing <code>XeroBridge::invoices()</code>
+with no <code>use</code> and no leading <code>\</code> resolves to <code>App\Services\Xero\XeroBridge</code> — a class that does
+not exist — and fatals with <em>&quot;Class not found&quot;</em> that names your own namespace, not the package's.
+Either add the <code>use</code> statement or write <code>\XeroBridge</code>. In Blade and <code>routes/*.php</code> (no namespace)
+the bare <code>XeroBridge::</code> works, which is what makes this inconsistent enough to trip over.</p>
+</blockquote>
+<p><strong>3. Inject the manager</strong> — no facade, and trivially mockable in tests:</p>
+<pre><code class="language-php">use Peoplelogy\XeroBridge\XeroBridgeManager;
+
+public function __construct(private readonly XeroBridgeManager $xero) {}
+
+// then
+$this-&gt;xero-&gt;invoices()-&gt;create([...]);
+</code></pre>
+<p><code>XeroBridgeManager</code> is a container singleton, also aliased as <code>'xero-bridge'</code>, so
+<code>app('xero-bridge')</code> and <code>app(XeroBridgeManager::class)</code> are the same object. The facade is a thin
+wrapper over exactly this — every method in the tables below works identically through all three.</p>
+<h3 id="what-you-import-and-when">What you import, and when</h3>
+<p>Only the facade is needed for ordinary use. The rest you import when a specific job calls for it:</p>
+<table>
+<thead>
+<tr>
+<th>Import</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Facades\XeroBridge</code></td>
+<td>Always — the entry point</td>
+</tr>
+<tr>
+<td><code>Filters\InvoiceFilter</code></td>
+<td>Building a <code>list()</code> / <code>all()</code> query (<a href="#flow-6--list-invoices">flow 6</a>)</td>
+</tr>
+<tr>
+<td><code>Exceptions\*</code></td>
+<td>Catching a specific failure (<a href="#error-handling">error handling</a>)</td>
+</tr>
+<tr>
+<td><code>Support\InvoiceTransitions</code></td>
+<td>Checking a status change is legal before attempting it</td>
+</tr>
+<tr>
+<td><code>Support\BatchResult</code></td>
+<td>Type-hinting the return of <code>createMany()</code></td>
+</tr>
+<tr>
+<td><code>Models\XeroConnection</code></td>
+<td>Reading the stored connection row directly</td>
+</tr>
+<tr>
+<td><code>Events\*</code></td>
+<td>Writing a listener</td>
+</tr>
+<tr>
+<td><code>Contracts\ConnectionRepository</code></td>
+<td>Replacing how connections are stored</td>
+</tr>
+</tbody>
+</table>
+<p>The <strong>resources</strong> — <code>Resources\Invoices</code>, <code>Contacts</code>, <code>Payments</code>, <code>Settings</code> — are never imported.
+You get them from the manager (<code>XeroBridge::invoices()</code>), and only type-hint them if you are
+passing one around.</p>
+<p>Everything under <code>Client\</code>, <code>OAuth\</code>, <code>Http\</code>, <code>Jobs\</code>, <code>Repositories\</code> and <code>Webhooks\</code> is
+internal plumbing. It is reachable, but if you find yourself importing from there, check the
+facade cannot already do it.</p>
+<h3 id="the-exceptions-in-full">The exceptions, in full</h3>
+<p>All under <code>Peoplelogy\XeroBridge\Exceptions\</code>, all extending <code>XeroBridgeException</code>:</p>
+<p><code>XeroBridgeException</code> · <code>XeroAuthenticationException</code> · <code>XeroConfigurationException</code> ·
+<code>XeroConnectionNotFoundException</code> · <code>XeroReauthorizationRequiredException</code> · <code>XeroScopeException</code> ·
+<code>XeroValidationException</code> · <code>XeroRequestException</code> · <code>XeroRateLimitException</code> ·
+<code>XeroServiceUnavailableException</code> · <code>XeroIdentityUnavailableException</code> ·
+<code>InvalidInvoicePayloadException</code> · <code>InvalidInvoiceTransitionException</code> ·
+<code>InvoiceCannotBeVoidedException</code> · <code>UnsafeContactPayloadException</code> ·
+<code>ConnectionKeyConflictException</code> · <code>TenantAlreadyConnectedException</code></p>
+<p>See <a href="#error-handling">error handling</a> for which to catch and why.</p>
+<h3 id="events-you-can-listen-to">Events you can listen to</h3>
+<p>All under <code>Peoplelogy\XeroBridge\Events\</code>, with public readonly properties:</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>Properties</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>XeroConnected</code></td>
+<td><code>XeroConnection $connection</code>, <code>bool $wasRepointed</code></td>
+</tr>
+<tr>
+<td><code>TokenRefreshed</code></td>
+<td><code>XeroConnection $connection</code>, <code>?CarbonImmutable $expiresAt</code></td>
+</tr>
+<tr>
+<td><code>ConnectionExpired</code></td>
+<td><code>XeroConnection $connection</code>, <code>string $reason</code>, <code>string $connectUrl</code></td>
+</tr>
+<tr>
+<td><code>InvoiceCreated</code></td>
+<td><code>string $connectionKey</code>, <code>array $invoice</code>, <code>?string $idempotencyKey</code></td>
+</tr>
+<tr>
+<td><code>XeroWebhookReceived</code></td>
+<td><code>WebhookEvent $event</code>, <code>WebhookEnvelope $envelope</code></td>
+</tr>
+<tr>
+<td><code>XeroWebhookSignatureFailed</code></td>
+<td><code>?string $signature</code>, <code>int $bodyLength</code>, <code>?string $ip</code></td>
+</tr>
+</tbody>
+</table>
+<pre><code class="language-php">use Peoplelogy\XeroBridge\Events\ConnectionExpired;
+
+Event::listen(ConnectionExpired::class, function (ConnectionExpired $e) {
+    Notification::route('mail', config('app.admin_email'))
+        -&gt;notify(new XeroNeedsReconnecting($e-&gt;reason, $e-&gt;connectUrl));
+});
+</code></pre>
+<p><code>ConnectionExpired</code> is the one worth wiring up: it fires when the refresh token dies, which no
+amount of retrying fixes — a human has to reconnect.</p>
+<p><code>XeroWebhookSignatureFailed</code> fires during Xero's intent-to-receive check by design — it sends
+deliberately bad signatures to confirm you reject them — so alert on a sustained stream, not on
+one.</p>
+<h3 id="artisan-commands">Artisan commands</h3>
+<pre><code class="language-bash">php artisan xero-bridge:install          # publish config + migration, print the .env keys
+php artisan xero-bridge:status           # connections, expiry, missing config — no API call
+php artisan xero-bridge:refresh-tokens   # run hourly from your scheduler
+</code></pre>
+<pre><code class="language-php">// routes/console.php
+Schedule::command('xero-bridge:refresh-tokens')-&gt;hourly()-&gt;withoutOverlapping()-&gt;onOneServer();
+</code></pre>
+<p><code>xero-bridge:status</code> exits <code>0</code> when healthy, <code>1</code> on incomplete config, <code>2</code> when a connection needs
+reauthorising — so it can be wired straight into monitoring.</p>
+<h3 id="four-resources">Four resources</h3>
+<pre><code class="language-php">XeroBridge::contacts()     // Contacts
+XeroBridge::invoices()     // Invoices
+XeroBridge::payments()     // Payments
+XeroBridge::settings()     // Organisation, Accounts, TaxRates, BrandingThemes (read-only)
+</code></pre>
+<p>Anything the package has not wrapped is still reachable:</p>
+<pre><code class="language-php">XeroBridge::request('GET', 'CreditNotes');          // decoded array
+XeroBridge::raw('GET', 'Invoices/{id}');            // the raw Response, for PDFs
+XeroBridge::client()-&gt;get('Currencies', ['where' =&gt; '...']);
+</code></pre>
+<h3 id="which-organisation-you-are-talking-to">Which organisation you are talking to</h3>
+<p>Most applications connect exactly one organisation, in which case you never name it:</p>
+<pre><code class="language-php">XeroBridge::invoices()-&gt;find('INV-0042');                      // the default connection
+XeroBridge::connection('acme')-&gt;invoices()-&gt;find('INV-0042');  // a named one
+</code></pre>
+<p><code>connection()</code> returns a <strong>clone</strong>, not <code>$this</code>. <code>XeroBridge::connection('acme')-&gt;invoices()</code> is
+scoped to that expression alone and cannot leak into the next call in the same request. The
+default connection name comes from <code>XERO_DEFAULT_CONNECTION</code> (<code>default</code>).</p>
+<h3 id="what-you-get-back">What you get back</h3>
+<p>Every method returns <strong>plain PHP arrays, already unwrapped</strong> from Xero's envelope. Xero answers
+<code>POST /Invoices</code> with <code>{&quot;Invoices&quot;: [ ... ]}</code>; <code>create()</code> hands you the inner element.</p>
+<table>
+<thead>
+<tr>
+<th>Shape</th>
+<th>Methods</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>array</code> — the record</td>
+<td><code>create()</code>, <code>update()</code>, <code>authorise()</code>, <code>organisation()</code></td>
+</tr>
+<tr>
+<td><code>?array</code> — <code>null</code> when absent, no exception</td>
+<td><code>find()</code>, <code>findByEmail()</code></td>
+</tr>
+<tr>
+<td><code>list&lt;array&gt;</code> — possibly empty</td>
+<td><code>list()</code>, <code>accounts()</code>, <code>taxRates()</code></td>
+</tr>
+<tr>
+<td><code>void</code></td>
+<td><code>email()</code> — Xero answers 204 with no body</td>
+</tr>
+<tr>
+<td><code>string</code></td>
+<td><code>pdf()</code> (raw bytes), <code>onlineUrl()</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="what-it-does-for-you">What it does for you</h3>
+<p>Token refresh (access tokens last 30 minutes, refresh tokens rotate and are refreshed under a
+per-connection lock), retries with backoff, <code>Retry-After</code> handling, <code>Idempotency-Key</code> on writes,
+and typed exceptions. You do not write any of that.</p>
+<h3 id="dates">Dates</h3>
+<p>Send plain <code>Y-m-d</code> strings. Xero <strong>returns</strong> <code>/Date(1772409600000+0000)/</code>, which is not
+JSON-parseable as a date — read <code>DateString</code> / <code>DueDateString</code> instead, or convert the
+milliseconds yourself. A date read back from Xero and re-posted unchanged will be rejected.</p>
+<hr />
+<h2 id="flow-1--first-or-create-a-contact">Flow 1 — first or create a contact</h2>
+<pre><code class="language-php">$contact = XeroBridge::contacts()-&gt;firstOrCreate(
+    ['EmailAddress' =&gt; 'finance@acme.com'],   // exactly ONE lookup key
+    [                                          // merged in only when creating
+        'Name' =&gt; 'Acme Sdn Bhd',
+        'FirstName' =&gt; 'Siti',
+        'LastName' =&gt; 'Rahman',
+        'CompanyNumber' =&gt; '202401012345',     // BRN
+        'TaxNumber' =&gt; 'C12345678901',         // TIN
+    ],
+);
+</code></pre>
+<h3 id="parameters">Parameters</h3>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>$lookup</code></td>
+<td><code>array&lt;string,string&gt;</code></td>
+<td><strong>Exactly one</strong> key, either <code>EmailAddress</code> or <code>Name</code>. Anything else throws <code>InvalidArgumentException</code>.</td>
+</tr>
+<tr>
+<td><code>$attributes</code></td>
+<td><code>array&lt;string,mixed&gt;</code></td>
+<td>Applied <strong>only on create</strong>. An existing contact comes back untouched.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="on-the-wire">On the wire</h3>
+<p>A lookup first (<code>GET /Contacts?where=EmailAddress==&quot;finance@acme.com&quot;</code>), then, only if nothing
+matched, a create:</p>
+<pre><code class="language-json">PUT /api.xro/2.0/Contacts
+{
+  &quot;Contacts&quot;: [
+    {
+      &quot;EmailAddress&quot;: &quot;finance@acme.com&quot;,
+      &quot;Name&quot;: &quot;Acme Sdn Bhd&quot;,
+      &quot;CompanyNumber&quot;: &quot;202401012345&quot;,
+      &quot;TaxNumber&quot;: &quot;C12345678901&quot;
+    }
+  ]
+}
+</code></pre>
+<h3 id="response">Response</h3>
+<pre><code class="language-json">{
+  &quot;ContactID&quot;: &quot;8138a266-fb42-49b2-a104-014b7045753d&quot;,
+  &quot;ContactStatus&quot;: &quot;ACTIVE&quot;,
+  &quot;Name&quot;: &quot;Acme Sdn Bhd&quot;,
+  &quot;EmailAddress&quot;: &quot;finance@acme.com&quot;,
+  &quot;CompanyNumber&quot;: &quot;202401012345&quot;,
+  &quot;TaxNumber&quot;: &quot;C12345678901&quot;,
+  &quot;ContactPersons&quot;: [],
+  &quot;IsCustomer&quot;: true,
+  &quot;UpdatedDateUTC&quot;: &quot;/Date(1790553726193+0000)/&quot;,
+  &quot;HasValidationErrors&quot;: false
+}
+</code></pre>
+<p>Persist <code>ContactID</code>. It is the only stable way to reference a contact.</p>
+<h3 id="gotchas">Gotchas</h3>
+<ul>
+<li><strong>It is a <code>PUT</code>, not a <code>POST</code>, on purpose.</strong> <code>POST /Contacts</code> is an implicit upsert: matched on
+a non-unique name, it silently overwrites a real customer record. Xero's own guidance is to
+reference contacts by <code>ContactID</code>.</li>
+<li><strong>Race-safe.</strong> If another process creates the contact between the lookup and the create, the
+loser gets a clean conflict and re-reads, rather than clobbering the winner.</li>
+<li><strong>Never use it to update.</strong> An existing contact ignores <code>$attributes</code> entirely. To change a
+contact, call <code>contacts()-&gt;update($contactId, [...])</code>.</li>
+<li><code>CompanyNumber</code> and <code>TaxNumber</code> are capped at 50 characters by Xero.</li>
+</ul>
+<hr />
+<h2 id="flow-21--create-a-draft-invoice">Flow 2.1 — create a DRAFT invoice</h2>
+<pre><code class="language-php">$invoice = XeroBridge::invoices()-&gt;create([
+    'Type' =&gt; 'ACCREC',                                    // REQUIRED
+    'Status' =&gt; 'DRAFT',
+    'Contact' =&gt; ['ContactID' =&gt; '1111...'],               // ContactID ALONE
+    'Date' =&gt; '2026-03-02',
+    'DueDate' =&gt; '2026-04-01',
+    'Reference' =&gt; 'CCF-2026-0042',
+    'LineItems' =&gt; [[
+        'Description' =&gt; 'Leadership training, 2 days',
+        'Quantity' =&gt; 1,
+        'UnitAmount' =&gt; 4800,
+        'AccountCode' =&gt; '200',      // omit to use the connection default
+        'TaxType' =&gt; 'OUTPUT',       // omit to use the connection default
+    ]],
+]);
+</code></pre>
+<h3 id="parameters-1">Parameters</h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Type</code></td>
+<td><strong>yes</strong></td>
+<td><code>ACCREC</code> (sales) or <code>ACCPAY</code> (bill). Missing throws <code>InvalidInvoicePayloadException</code> before anything is sent.</td>
+</tr>
+<tr>
+<td><code>Contact</code></td>
+<td><strong>yes</strong></td>
+<td><code>['ContactID' =&gt; ...]</code> — see the gotcha below.</td>
+</tr>
+<tr>
+<td><code>LineItems</code></td>
+<td><strong>yes</strong></td>
+<td>At least one. <code>Description</code> is the minimum.</td>
+</tr>
+<tr>
+<td><code>Status</code></td>
+<td>no</td>
+<td>Omitted creates a <code>DRAFT</code>.</td>
+</tr>
+<tr>
+<td><code>Date</code>, <code>DueDate</code>, <code>Reference</code></td>
+<td>no</td>
+<td>Plain <code>Y-m-d</code>.</td>
+</tr>
+<tr>
+<td><code>AccountCode</code>, <code>TaxType</code>, <code>CurrencyCode</code>, <code>BrandingThemeID</code></td>
+<td>no</td>
+<td>Filled from the connection defaults <strong>only where you left them out</strong>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="on-the-wire-1">On the wire</h3>
+<p><code>POST /api.xro/2.0/Invoices</code>, with an <code>Idempotency-Key</code> header:</p>
+<pre><code class="language-json">{
+  &quot;Invoices&quot;: [
+    {
+      &quot;Type&quot;: &quot;ACCREC&quot;,
+      &quot;Contact&quot;: { &quot;ContactID&quot;: &quot;11111111-1111-1111-1111-111111111111&quot; },
+      &quot;Date&quot;: &quot;2026-03-02&quot;,
+      &quot;DueDate&quot;: &quot;2026-04-01&quot;,
+      &quot;Reference&quot;: &quot;CCF-2026-0042&quot;,
+      &quot;Status&quot;: &quot;DRAFT&quot;,
+      &quot;LineItems&quot;: [
+        {
+          &quot;Description&quot;: &quot;Leadership training, 2 days&quot;,
+          &quot;Quantity&quot;: 1,
+          &quot;UnitAmount&quot;: 4800,
+          &quot;TaxType&quot;: &quot;OUTPUT&quot;,
+          &quot;AccountCode&quot;: &quot;200&quot;
+        }
+      ],
+      &quot;CurrencyCode&quot;: &quot;MYR&quot;
+    }
+  ]
+}
+</code></pre>
+<h3 id="response-1">Response</h3>
+<p>The method returns the inner invoice, not the envelope:</p>
+<pre><code class="language-json">{
+  &quot;Type&quot;: &quot;ACCREC&quot;,
+  &quot;InvoiceID&quot;: &quot;22222222-2222-2222-2222-222222222222&quot;,
+  &quot;InvoiceNumber&quot;: &quot;INV-0042&quot;,
+  &quot;Reference&quot;: &quot;CCF-2026-0042&quot;,
+  &quot;Status&quot;: &quot;DRAFT&quot;,
+  &quot;AmountDue&quot;: 5184.00,
+  &quot;AmountPaid&quot;: 0.00,
+  &quot;SubTotal&quot;: 4800.00,
+  &quot;TotalTax&quot;: 384.00,
+  &quot;Total&quot;: 5184.00,
+  &quot;CurrencyCode&quot;: &quot;MYR&quot;,
+  &quot;DateString&quot;: &quot;2026-03-02T00:00:00&quot;,
+  &quot;DueDateString&quot;: &quot;2026-04-01T00:00:00&quot;,
+  &quot;SentToContact&quot;: false,
+  &quot;Contact&quot;: { &quot;ContactID&quot;: &quot;1111...&quot;, &quot;Name&quot;: &quot;Acme Sdn Bhd&quot; },
+  &quot;LineItems&quot;: [
+    {
+      &quot;LineItemID&quot;: &quot;33333333-3333-3333-3333-333333333333&quot;,
+      &quot;Description&quot;: &quot;Leadership training, 2 days&quot;,
+      &quot;UnitAmount&quot;: 4800.00,
+      &quot;TaxType&quot;: &quot;OUTPUT&quot;,
+      &quot;TaxAmount&quot;: 384.00,
+      &quot;LineAmount&quot;: 4800.00,
+      &quot;AccountCode&quot;: &quot;200&quot;,
+      &quot;Quantity&quot;: 1.0000
+    }
+  ]
+}
+</code></pre>
+<p>Persist <code>InvoiceID</code> and <code>InvoiceNumber</code>. Note that <strong>tax is computed server-side</strong> — you sent
+4800, Xero returned a <code>Total</code> of 5184.</p>
+<h3 id="gotchas-1">Gotchas</h3>
+<ul>
+<li><strong><code>Contact</code> must carry <code>ContactID</code> and nothing else.</strong> With <code>ContactID</code> plus any other field,
+Xero applies those fields to the <em>contact record</em> and <strong>deletes any <code>ContactPersons</code> you left
+out</strong>. The package refuses this with <code>UnsafeContactPayloadException</code> rather than letting it
+happen; <code>withContactMutation()</code> opts in if you genuinely mean it. It is irreversible and nobody
+notices for weeks.</li>
+<li>A <code>DRAFT</code> can be deleted outright. Once <code>AUTHORISED</code> it can only be voided, and it stays visible
+in Xero forever.</li>
+<li>An unknown <code>AccountCode</code> is a 400 → <code>XeroValidationException</code>, with Xero's own message in
+<code>validationErrors()</code>.</li>
+<li>The <code>Idempotency-Key</code> is retained by Xero for <strong>six minutes</strong>. It protects an immediate network
+retry; it does <strong>not</strong> deduplicate a queued job retried an hour later. Persist <code>InvoiceID</code> for
+that.</li>
+</ul>
+<hr />
+<h2 id="flow-22--create-an-invoice-that-ends-up-paid">Flow 2.2 — create an invoice that ends up PAID</h2>
+<blockquote>
+<h3 id="paid-is-not-a-status-you-can-set">PAID is not a status you can set</h3>
+<p>Xero rejects <code>&quot;Status&quot;: &quot;PAID&quot;</code> on create. <code>PAID</code> is what Xero moves an invoice to once payments
+cover it in full. There is no single call for this.</p>
+</blockquote>
+<p>Three steps, in this order:</p>
+<pre><code class="language-php">// 1. AUTHORISED, not DRAFT — a payment cannot attach to a draft
+$invoice = XeroBridge::invoices()-&gt;create([
+    'Type' =&gt; 'ACCREC',
+    'Status' =&gt; 'AUTHORISED',
+    'Contact' =&gt; ['ContactID' =&gt; $contactId],
+    'LineItems' =&gt; [[ 'Description' =&gt; '...', 'Quantity' =&gt; 1, 'UnitAmount' =&gt; 4800 ]],
+]);
+
+// 2. pay Xero's own AmountDue, never the figure you sent
+$payment = XeroBridge::payments()-&gt;createForInvoice(
+    $invoice['InvoiceID'],
+    (float) $invoice['AmountDue'],   // 5184.00, not 4800
+    '090',                           // a BANK / payments-enabled account code
+    '2026-03-02',                    // optional, defaults to today
+);
+
+// 3. read it back — do not assume
+$settled = XeroBridge::invoices()-&gt;find($invoice['InvoiceID']);
+// $settled['Status'] === 'PAID'
+</code></pre>
+<h3 id="createforinvoice-parameters"><code>createForInvoice()</code> parameters</h3>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>$invoiceId</code></td>
+<td><code>string</code></td>
+<td>Must be <strong>AUTHORISED</strong>.</td>
+</tr>
+<tr>
+<td><code>$amount</code></td>
+<td><code>float|int|string</code></td>
+<td>Use the invoice's <code>AmountDue</code>.</td>
+</tr>
+<tr>
+<td><code>$accountCode</code></td>
+<td><code>?string</code></td>
+<td>Type <code>BANK</code>, or with &quot;enable payments to this account&quot; on. Discover with <code>settings()-&gt;paymentAccounts()</code>. Throws <code>InvalidArgumentException</code> if null and no connection default.</td>
+</tr>
+<tr>
+<td><code>$date</code></td>
+<td><code>DateTimeInterface|string|null</code></td>
+<td>Defaults to today.</td>
+</tr>
+<tr>
+<td><code>$extra</code></td>
+<td><code>array</code></td>
+<td>Merged into the payload.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="on-the-wire-2">On the wire</h3>
+<pre><code class="language-json">POST /api.xro/2.0/Payments
+{
+  &quot;Payments&quot;: [
+    {
+      &quot;Invoice&quot;: { &quot;InvoiceID&quot;: &quot;c7c37b83-ac95-45ea-88ba-8ad83a5f22fe&quot; },
+      &quot;Account&quot;: { &quot;Code&quot;: &quot;090&quot; },
+      &quot;Amount&quot;: 5184,
+      &quot;Date&quot;: &quot;2026-03-02&quot;
+    }
+  ]
+}
+</code></pre>
+<h3 id="gotchas-2">Gotchas</h3>
+<ul>
+<li><strong>Pay <code>AmountDue</code>, not your own total.</strong> Tax and rounding are applied server-side. Paying the
+pre-tax figure leaves the invoice <code>AUTHORISED</code> with a balance, not <code>PAID</code>.</li>
+<li><strong>A <code>PAID</code> invoice can never be changed.</strong> <code>InvoiceTransitions</code> lists no legal transition out of
+it. To correct one, reverse the payment first with <code>payments()-&gt;delete($paymentId)</code>, then void.</li>
+<li>Overpaying is rejected by Xero — check <code>AmountDue</code> before applying.</li>
+<li>A successful 200 can still carry a <code>Warnings</code> array (a <code>CurrencyRate</code> warning, typically). The
+package logs it; check it yourself if a wrong foreign-currency amount would matter.</li>
+</ul>
+<hr />
+<h2 id="flow-3--tin-brn-cc-list-then-send">Flow 3 — TIN, BRN, CC list, then send</h2>
+<p>Three facts shape this flow, and all three surprise people.</p>
+<blockquote>
+<h3 id="post-invoicesidemail-takes-an-empty-body"><code>POST /Invoices/{id}/Email</code> takes an empty body</h3>
+<p>No <code>to</code>, no <code>cc</code>, no <code>bcc</code>, no <code>subject</code>, no <code>body</code>, no <code>replyTo</code>. Xero's own OpenAPI spec types
+the request body as <code>RequestEmpty</code>. The package sends <code>[]</code> on the wire and has a test asserting
+it stays empty.</p>
+</blockquote>
+<ol>
+<li><strong>TIN and BRN live on the contact, not the invoice.</strong> In a Malaysian organisation the TIN goes
+in <code>TaxNumber</code> (the field is relabelled per region — ABN in Australia, VAT Number in the UK);
+the BRN is <code>CompanyNumber</code>. Both max 50 characters.</li>
+<li><strong><code>ContactPersons</code> with <code>IncludeInEmails</code> is the only CC mechanism.</strong> Maximum five. The list you
+send <strong>replaces</strong> the stored one wholesale, so build it in full every time. It is <strong>per contact,
+not per send</strong> — everyone on it is copied on every future invoice for that customer until you
+change it back.</li>
+<li><strong>Xero only emails a SUBMITTED, AUTHORISED or PAID invoice</strong>, so a DRAFT must be approved first.</li>
+</ol>
+<h3 id="validate-the-tin-before-you-store-it">Validate the TIN before you store it</h3>
+<p>From v1.3.0 the package can check the buyer's TIN against LHDN Malaysia's MyInvois API before it is
+written onto the contact, rather than trusting whatever was typed:</p>
+<pre><code class="language-php">use Peoplelogy\XeroBridge\MyInvois\Facades\MyInvois;
+use Peoplelogy\XeroBridge\MyInvois\IdType;
+
+if (! MyInvois::validate($tin, IdType::BRN, $brn)) {
+    // HASiL has no record of this pair. Ask the buyer to confirm both values
+    // rather than writing them to the contact and on to the invoice.
+}
+</code></pre>
+<p>Three things about it matter here:</p>
+<ul>
+<li><strong>It needs BOTH values.</strong> Since 1 August 2026 LHDN validates the TIN and the registration number
+<em>as a pair</em>, so a valid TIN with a stale or mistyped BRN answers exactly like a fabricated one.
+That is a reason to collect the BRN carefully, not a reason to distrust the check.</li>
+<li><strong>A negative answer is not an error.</strong> LHDN returns HTTP 404 for &quot;no such pair&quot;, which is the
+answer you asked for, so the method returns <code>false</code>. Only a genuine failure — a malformed request,
+a credential problem, a rate limit, an outage — throws.</li>
+<li><strong>A positive answer is narrower than it looks.</strong> It proves the pair exists in HASiL's records. It
+does <em>not</em> prove the pair belongs to the customer you are invoicing: the endpoint returns no name
+and no address at all.</li>
+</ul>
+<p>The module is <strong>off by default</strong> and needs <code>MYINVOIS_ENABLED=true</code> with credentials from the
+MyInvois portal. Full detail in
+<a href="08-myinvois-tin-validation.md">08-myinvois-tin-validation.md</a>.</p>
+<pre><code class="language-php">// (a) the buyer's details, onto the CONTACT
+XeroBridge::contacts()-&gt;update($contactId, [
+    'CompanyNumber' =&gt; '202401012345',   // BRN
+    'TaxNumber' =&gt; 'C12345678901',       // TIN
+    'ContactPersons' =&gt; [
+        ['FirstName' =&gt; 'Siti', 'LastName' =&gt; 'Rahman',
+         'EmailAddress' =&gt; 'ap@acme.com', 'IncludeInEmails' =&gt; true],
+        ['FirstName' =&gt; 'Finance', 'LastName' =&gt; 'Team',
+         'EmailAddress' =&gt; 'finance@acme.com', 'IncludeInEmails' =&gt; true],
+    ],
+]);
+
+// (b) Xero refuses to email a DRAFT
+XeroBridge::invoices()-&gt;authorise($invoiceId);
+
+// (c) send. 204 No Content, so this returns void.
+XeroBridge::invoices()-&gt;email($invoiceId);
+</code></pre>
+<h3 id="on-the-wire-3">On the wire</h3>
+<p><code>POST /Contacts/{ContactID}</code>:</p>
+<pre><code class="language-json">{
+  &quot;Contacts&quot;: [
+    {
+      &quot;CompanyNumber&quot;: &quot;202401012345&quot;,
+      &quot;TaxNumber&quot;: &quot;C12345678901&quot;,
+      &quot;ContactPersons&quot;: [
+        { &quot;FirstName&quot;: &quot;Siti&quot;, &quot;LastName&quot;: &quot;Rahman&quot;,
+          &quot;EmailAddress&quot;: &quot;ap@acme.com&quot;, &quot;IncludeInEmails&quot;: true }
+      ]
+    }
+  ]
+}
+</code></pre>
+<p>then <code>POST /Invoices/{InvoiceID}</code> with nothing but a status:</p>
+<pre><code class="language-json">{ &quot;Invoices&quot;: [ { &quot;Status&quot;: &quot;AUTHORISED&quot; } ] }
+</code></pre>
+<p>then <code>POST /Invoices/{InvoiceID}/Email</code> with an empty body.</p>
+<h3 id="who-actually-receives-it">Who actually receives it</h3>
+<p>The contact's own <code>EmailAddress</code>, plus every <code>ContactPerson</code> whose <code>IncludeInEmails</code> is <code>true</code>.
+That is the entire mechanism.</p>
+<h3 id="gotchas-3">Gotchas</h3>
+<ul>
+<li><strong>You cannot copy someone on one invoice only.</strong> Changing who is copied means changing the
+contact, and that applies to every subsequent invoice for that customer.</li>
+<li><strong>The template and sender are not yours.</strong> Subject and body come from the organisation's email
+template, configured in Xero's UI. The sender is the user who authorised the app connection.</li>
+<li><strong>You cannot read back what was sent.</strong> There is no API for the rendered email. If you need an
+audit trail, log the <code>ContactPersons</code> you set and the moment you called <code>email()</code>.</li>
+<li>If none of that fits, send it yourself: <code>invoices()-&gt;pdf($id)</code> for the bytes or
+<code>invoices()-&gt;onlineUrl($id)</code> for the public link, build your own Mailable, then call
+<code>invoices()-&gt;markAsSent($id)</code> so Xero's UI still shows it as sent.</li>
+</ul>
+<hr />
+<h2 id="flow-4--find-one-invoice">Flow 4 — find one invoice</h2>
+<pre><code class="language-php">$invoice = XeroBridge::invoices()-&gt;find('INV-0042');   // or the InvoiceID GUID
+
+if ($invoice === null) {
+    // no such invoice — this is NOT an exception
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>$idOrNumber</code></td>
+<td>An <code>InvoiceID</code> GUID <strong>or</strong> a human <code>InvoiceNumber</code> such as <code>INV-0042</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><code>GET /api.xro/2.0/Invoices/{id}</code>. Returns the same shape as <a href="#flow-21--create-a-draft-invoice">2.1</a>,
+including full <code>LineItems</code> and any <code>Payments</code> applied.</p>
+<p><strong>Gotcha:</strong> returns <code>null</code> for &quot;not found&quot; rather than throwing, so <code>??</code> and <code>is_null()</code> work
+naturally — but an unchecked <code>$invoice['Status']</code> will fatal on a miss.</p>
+<hr />
+<h2 id="flow-5--find-a-contact">Flow 5 — find a contact</h2>
+<h3 id="51-by-email--contactsfindbyemail">5.1 By email — <code>contacts.find_by_email</code></h3>
+<pre><code class="language-php">$contact = XeroBridge::contacts()-&gt;findByEmail('finance@acme.com');   // ?array
+</code></pre>
+<p><code>GET /Contacts?where=EmailAddress==&quot;finance@acme.com&quot;</code>. Returns the <strong>first</strong> match or <code>null</code>.</p>
+<p><strong>Gotcha:</strong> Xero allows more than one contact per email address. Treat this as <em>a</em> match, not
+<em>the</em> match. <code>findAllByEmail()</code> returns every one if that distinction matters.</p>
+<h3 id="52-by-contactid--contactsfind">5.2 By ContactID — <code>contacts.find</code></h3>
+<pre><code class="language-php">$contact = XeroBridge::contacts()-&gt;find('8138a266-fb42-49b2-a104-014b7045753d');   // ?array
+</code></pre>
+<p><code>GET /Contacts/{ContactID}</code>. The only unique way to reference a contact — Xero explicitly warns
+that contact names are not unique and recommends <code>ContactID</code> everywhere.</p>
+<p>Both return the shape shown under <a href="#flow-1--first-or-create-a-contact">flow 1</a>.</p>
+<hr />
+<h2 id="flow-6--list-invoices">Flow 6 — list invoices</h2>
+<pre><code class="language-php">use Peoplelogy\XeroBridge\Filters\InvoiceFilter;
+
+$invoices = XeroBridge::invoices()-&gt;list(
+    InvoiceFilter::make()
+        -&gt;statuses(['AUTHORISED', 'PAID'])
+        -&gt;type('ACCREC')
+        -&gt;dateBetween('2026-01-01', '2026-03-31')
+        -&gt;orderBy('Date', 'DESC')
+        -&gt;page(1, 25)
+);
+</code></pre>
+<p>Returns <code>list&lt;array&gt;</code> — one page. For everything matching, <code>all()</code> returns a <code>LazyCollection</code> and
+walks Xero's pagination for you:</p>
+<pre><code class="language-php">XeroBridge::invoices()-&gt;all($filter)-&gt;each(fn (array $invoice) =&gt; /* ... */);
+</code></pre>
+<h3 id="filter-methods">Filter methods</h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>statuses(string|array)</code></td>
+<td><code>DRAFT</code>, <code>SUBMITTED</code>, <code>AUTHORISED</code>, <code>PAID</code>, <code>VOIDED</code>, <code>DELETED</code></td>
+</tr>
+<tr>
+<td><code>type(string)</code></td>
+<td><code>ACCREC</code> or <code>ACCPAY</code></td>
+</tr>
+<tr>
+<td><code>contactIds()</code>, <code>contactName()</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>invoiceNumbers()</code>, <code>ids()</code>, <code>reference()</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>dateBetween($from, $to)</code></td>
+<td>Either side may be null</td>
+</tr>
+<tr>
+<td><code>modifiedSince($when)</code></td>
+<td>Sent as the <code>If-Modified-Since</code> header, not a query param</td>
+</tr>
+<tr>
+<td><code>orderBy($field, $dir)</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>page($page, $pageSize)</code>, <code>pageSize()</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>summaryOnly()</code></td>
+<td>Lighter rows, no line items</td>
+</tr>
+<tr>
+<td><code>createdByMyApp()</code></td>
+<td>Only invoices this app created</td>
+</tr>
+<tr>
+<td><code>whereRaw()</code>, <code>whereEquals()</code>, <code>whereGuid()</code></td>
+<td>Escape hatches</td>
+</tr>
+</tbody>
+</table>
+<h3 id="gotchas-4">Gotchas</h3>
+<ul>
+<li><strong>Always page.</strong> An unbounded <code>/Invoices</code> on a live organisation is the quickest way to spend the
+daily rate limit. <code>all()</code> pages at 100 unless told otherwise.</li>
+<li><strong>Xero caps a page at 1000 and silently clamps anything larger</strong>, so <code>pageSize()</code> throws outside
+1–1000 rather than let a typo'd <code>5000</code> look like it worked.</li>
+<li><code>list()</code> gives one page and ignores the rest. <code>all()</code> is the one that walks.</li>
+<li><code>summaryOnly()</code> omits <code>LineItems</code> — don't reach into them on a summary row.</li>
+<li><code>modifiedSince()</code> is a header, so it does not appear in the query string when debugging.</li>
+</ul>
+<hr />
+<h2 id="error-handling">Error handling</h2>
+<p>Every failure is a typed exception extending <code>Peoplelogy\XeroBridge\Exceptions\XeroBridgeException</code>.
+Catch the specific one when you can act on it differently; catch the base class as a backstop.</p>
+<pre><code class="language-php">use Peoplelogy\XeroBridge\Exceptions\XeroBridgeException;
+use Peoplelogy\XeroBridge\Exceptions\XeroRateLimitException;
+use Peoplelogy\XeroBridge\Exceptions\XeroValidationException;
+
+try {
+    $invoice = XeroBridge::invoices()-&gt;create($payload);
+} catch (XeroValidationException $e) {
+    // Xero rejected the payload. $e-&gt;validationErrors() holds its own messages.
+    report($e);
+} catch (XeroRateLimitException $e) {
+    // $e-&gt;retryAfter() is seconds, or null on a concurrency limit.
+    $this-&gt;release($e-&gt;retryAfter() ?? 60);
+} catch (XeroBridgeException $e) {
+    report($e);
+}
+</code></pre>
+<h3 id="what-to-catch-and-what-it-means">What to catch, and what it means</h3>
+<table>
+<thead>
+<tr>
+<th>Exception</th>
+<th>Cause</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>XeroConfigurationException</code></td>
+<td>A <code>XERO_*</code> key is missing or wrong (bad redirect URI, no <code>offline_access</code>)</td>
+<td>Fix <code>.env</code>, <code>php artisan config:clear</code>. Never retried.</td>
+</tr>
+<tr>
+<td><code>XeroConnectionNotFoundException</code></td>
+<td>Nothing connected under that key</td>
+<td>Send an admin to <code>/xero/connect</code></td>
+</tr>
+<tr>
+<td><code>XeroReauthorizationRequiredException</code></td>
+<td>The refresh token is dead (terminal <code>invalid_grant</code>)</td>
+<td>Reconnect. No code change helps.</td>
+</tr>
+<tr>
+<td><code>XeroScopeException</code></td>
+<td>The connection was authorised without a scope this call needs</td>
+<td>Add it to <code>XERO_SCOPES</code> <strong>and reconnect</strong> — an existing connection never gains scopes</td>
+</tr>
+<tr>
+<td><code>XeroValidationException</code></td>
+<td>400 from Xero: unknown <code>AccountCode</code>, missing contact, bad <code>TaxType</code></td>
+<td>Fix the payload. <code>validationErrors()</code> names the element.</td>
+</tr>
+<tr>
+<td><code>UnsafeContactPayloadException</code></td>
+<td>An invoice <code>Contact</code> block carries <code>ContactID</code> <strong>plus</strong> other fields</td>
+<td>Send <code>ContactID</code> alone</td>
+</tr>
+<tr>
+<td><code>InvalidInvoicePayloadException</code></td>
+<td><code>Type</code> missing on create</td>
+<td>Nothing was sent</td>
+</tr>
+<tr>
+<td><code>InvalidInvoiceTransitionException</code></td>
+<td>e.g. voiding a DRAFT</td>
+<td>Checked locally against <code>InvoiceTransitions</code>, so the message names the current status</td>
+</tr>
+<tr>
+<td><code>XeroRateLimitException</code></td>
+<td>429</td>
+<td><code>retryAfter()</code> on minute/daily limits; <strong>null on a concurrency limit</strong> — back off yourself</td>
+</tr>
+<tr>
+<td><code>XeroServiceUnavailableException</code></td>
+<td>Organisation offline, or Xero is down</td>
+<td>Retry in a few minutes</td>
+</tr>
+<tr>
+<td><code>XeroRequestException</code></td>
+<td>Anything else non-2xx</td>
+<td>Inspect <code>statusCode()</code> and <code>response()</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="useful-accessors-on-any-xerobridgeexception">Useful accessors on any <code>XeroBridgeException</code></h3>
+<pre><code class="language-php">$e-&gt;statusCode();        // ?int
+$e-&gt;connectionKey();     // ?string
+$e-&gt;validationErrors();  // array — Xero's own messages
+$e-&gt;xeroType();          // ?string
+$e-&gt;xeroErrorNumber();   // ?int
+$e-&gt;retryAfter();        // ?int seconds
+$e-&gt;response();          // ?Illuminate\Http\Client\Response
+$e-&gt;context();           // array
+</code></pre>
+<h3 id="in-a-queued-job">In a queued job</h3>
+<p><code>retryAfter()</code> exists so a worker can <code>release()</code> itself instead of sleeping. A daily rate limit
+can carry a <code>Retry-After</code> measured in hours — never sleep inline on one.</p>
+<hr />
+<h2 id="things-that-differ-per-organisation">Things that differ per organisation</h2>
+<p><strong>Nothing below should ever be hardcoded.</strong> These differ between Xero organisations, so a value
+that works in the sandbox will be rejected in production.</p>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>How to discover it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Account codes</td>
+<td><code>XeroBridge::settings()-&gt;accounts()</code> — a <code>200</code> sales account in one org is <code>4000</code> in another</td>
+</tr>
+<tr>
+<td>Payment accounts</td>
+<td><code>XeroBridge::settings()-&gt;paymentAccounts()</code> — type <code>BANK</code> or payments-enabled only</td>
+</tr>
+<tr>
+<td>Tax types</td>
+<td><code>XeroBridge::settings()-&gt;taxRates()</code> — the <code>TaxType</code> code, not the label</td>
+</tr>
+<tr>
+<td>Branding themes</td>
+<td><code>XeroBridge::settings()-&gt;brandingThemes()</code></td>
+</tr>
+<tr>
+<td>Base currency, region, <code>IsDemoCompany</code></td>
+<td><code>XeroBridge::settings()-&gt;organisation()</code></td>
+</tr>
+</tbody>
+</table>
+<p>This is also why three of the four per-connection defaults ship <strong>no value at all</strong>. Only
+<code>XERO_CURRENCY</code> has one, and only because a base currency is a property of the organisation rather
+than of a line:</p>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>Ships a default?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>XERO_ACCOUNT_CODE</code></td>
+<td>no — the <code>200</code> fallback was removed in v1.1.0</td>
+</tr>
+<tr>
+<td><code>XERO_TAX_TYPE</code></td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>XERO_BRANDING_THEME_ID</code></td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>XERO_CURRENCY</code></td>
+<td>yes, <code>MYR</code></td>
+</tr>
+</tbody>
+</table>
+<p>A wrong-but-present account code is worse than a missing one: Xero accepts the invoice and posts it
+to whatever account that code happens to be in that organisation, and nobody notices until Finance
+reconciles. With no default, Xero rejects the invoice and names the problem.</p>
+<p><code>XERO_TAX_TYPE</code> is unset for a second reason. Tax is frequently <strong>per line</strong>, not per invoice —
+under Malaysian SST, for instance, training is 8% while education and rental are 6%, so a single
+invoice can legitimately carry two rates. A connection-wide default would quietly stamp the wrong
+one on a venue recharge. Set it only if every line of every invoice on that connection genuinely
+carries the same rate.</p>
+<p>None of these are cached by the package. The right cache key, TTL and invalidation depend
+entirely on the consuming application, so caching belongs there.</p>
+<p>The same caution applies to a MyInvois TIN check. A match tells you the TIN and registration number
+exist together in HASiL's records and nothing further — no name is returned, so it is not evidence
+of who you are dealing with. And because the pair has only been validated together since 1 August
+2026, any verdict stored before that date was answering a weaker question and is worth re-running.</p>
+<hr />
+<h2 id="related">Related</h2>
+<ul>
+<li>The numbered guides in this directory — <a href="01-getting-started.md">01-getting-started</a>,
+<code>02-invoices</code>, <code>03-contacts-payments-settings</code>, <code>04-webhooks-and-events</code>,
+<code>05-commands-and-errors</code>, <code>06-recipes</code>, <code>07-test-console</code>. Deeper than this page on every topic,
+and the authority where the two disagree.</li>
+<li>The test console at <code>/xero/console</code> — runs every flow below by hand and shows the request
+timings, the rate limit Xero reported and the full response. See <code>07-test-console</code> for the write
+guard and for how it is switched on and off.</li>
+<li><code>php artisan xero-bridge:status</code> — connections, token expiry and missing configuration, without
+calling Xero</li>
+<li><code>08-myinvois-tin-validation</code> in the package docs — the optional LHDN MyInvois taxpayer TIN
+validator: turning it on, the 404-is-an-answer contract, caching and troubleshooting</li>
+<li><a href="https://developer.xero.com/documentation/api/accounting/overview">Xero Accounting API reference</a>
+— for the fields this package passes through untouched</li>
+</ul>
+
+</div>
+</body>
+</html>

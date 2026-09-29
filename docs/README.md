@@ -15,6 +15,27 @@ The [project README](../README.md) is the overview; these pages are the detail.
 | [7. The test console](07-test-console.md) | The page at `/xero/console` that ships with the package — turning it on and off, who can reach it, the write guard, and every action |
 | [8. MyInvois TIN validation](08-myinvois-tin-validation.md) | Optional, off by default: validating a Malaysian taxpayer's TIN against LHDN's MyInvois API |
 
+Alongside them, one document written to be **circulated** rather than browsed:
+
+| Document | What it is |
+|---|---|
+| [Using peoplelogy/laravel-xero-bridge](xero-bridge-usage.md) | A single-file practical reference for the six flows most applications need — the calling mechanism, each flow's wire payload and response, error handling. Also built as `.html` and `.pdf` for people who will not clone this repository. |
+
+Regenerate those two after editing the Markdown:
+
+```bash
+php docs/build-xero-bridge-usage.php     # -> xero-bridge-usage.html
+
+# then, for the PDF (Chrome writes the file and hangs; background it and
+# verify with pdfinfo rather than waiting for it to exit)
+chrome --headless --no-pdf-header-footer \
+  --print-to-pdf=docs/xero-bridge-usage.pdf \
+  file://$PWD/docs/xero-bridge-usage.html
+```
+
+The masthead version is read from the document's own version note, so the two cannot disagree — the
+build fails rather than produce a mislabelled file.
+
 ## Start here
 
 If you are wiring this into an application for the first time, read
