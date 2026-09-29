@@ -10,6 +10,20 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-09-29
+
+### Fixed
+
+- **The sample config block in the README no longer switches the new features off.**
+  It listed the shipped defaults, so copying it verbatim left MyInvois TIN validation and API call
+  capture disabled -- which reads identically to "I configured this" from the outside, and is exactly
+  how a MyInvois panel went missing after the block was pasted. `MYINVOIS_ENABLED` and
+  `XERO_CAPTURE` now both read `true`, with the package default stated in the comment above each, and
+  each names the step people forget: `myinvois-config` is its own publish tag, and capture records
+  nothing until its migrations are published and run.
+
+  Documentation only. No code changed between 1.4.0 and 1.4.1.
+
 ## [1.4.0] - 2026-09-29
 
 ### Added
@@ -451,7 +465,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.1.0...v1.2.0
