@@ -149,6 +149,42 @@ composer update peoplelogy/laravel-xero-bridge --with-dependencies
 Nothing else is needed for a patch release. If a release adds configuration or a migration, its changelog
 entry says so and names the command to run.
 
+### Your published config is never updated
+
+`composer update` replaces the package in `vendor/`. It does **not** touch `config/xero-bridge.php`,
+because that file is yours the moment you publish it. So a release that renames or removes a setting
+leaves your copy reading the old one — and Laravel's config merge hides that: `mergeConfigFrom` is a
+shallow, top-level merge, so wherever your file defines a key, your whole array for that key wins and
+the package's version of it is discarded.
+
+It fails quietly rather than loudly. A setting left under its old name is simply ignored, and the value
+you supply under the new name never reaches the package.
+
+Check for drift after any minor upgrade:
+
+```bash
+diff config/xero-bridge.php vendor/peoplelogy/laravel-xero-bridge/config/xero-bridge.php
+```
+
+Differences you made yourself are fine — that is the point of publishing. Differences you did not make
+are the package moving on without you.
+
+To take the new file, **read that diff first**, then:
+
+```bash
+php artisan vendor:publish --tag=xero-bridge-config --force
+php artisan config:clear
+```
+
+`--force` overwrites, so any customisation of your own has to be reapplied afterwards. When the diff is
+only upstream changes, this costs nothing.
+
+> **A real example.** v1.1.0 renamed `XERO_DEFAULT_ACCOUNT_CODE` to `XERO_ACCOUNT_CODE` and removed its
+> `'200'` fallback. An application that updated the package, renamed the key in its environment file and
+> stopped there still had a published config reading `env('XERO_DEFAULT_ACCOUNT_CODE', '200')`. The
+> correctly-named value was ignored and every invoice line posted to account `200` — whatever that
+> happens to be in that organisation. Nothing errors. Nobody finds out until Finance reconciles.
+
 ---
 
 ## Uninstalling
