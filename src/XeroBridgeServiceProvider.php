@@ -14,12 +14,14 @@ use Peoplelogy\XeroBridge\Commands\InstallCommand;
 use Peoplelogy\XeroBridge\Commands\RefreshTokensCommand;
 use Peoplelogy\XeroBridge\Commands\StatusCommand;
 use Peoplelogy\XeroBridge\Contracts\ConnectionRepository;
+use Peoplelogy\XeroBridge\Http\Middleware\EnsureConsoleEnabled;
 use Peoplelogy\XeroBridge\OAuth\AuthorizationUrlBuilder;
 use Peoplelogy\XeroBridge\OAuth\IdentityClient;
 use Peoplelogy\XeroBridge\OAuth\OAuthStateStore;
 use Peoplelogy\XeroBridge\OAuth\TokenManager;
 use Peoplelogy\XeroBridge\Repositories\EloquentConnectionRepository;
 use Peoplelogy\XeroBridge\Support\ClientRegistry;
+use Peoplelogy\XeroBridge\Support\Diagnostics;
 use Peoplelogy\XeroBridge\Support\XeroConfig;
 use Psr\Log\LoggerInterface;
 use Spatie\LaravelPackageTools\Package;
@@ -32,6 +34,9 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
         $package
             ->name('laravel-xero-bridge')
             ->hasConfigFile()
+            // Namespace `xero-bridge::`, publish tag `xero-bridge-views`. The
+            // only view is the test console, which needs no publishing to work.
+            ->hasViews()
             ->hasMigration('create_xero_connections_table')
             ->hasCommands([
                 InstallCommand::class,
@@ -94,6 +99,14 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
             $app->make(XeroConfig::class),
         ));
 
+        // Shared by xero-bridge:status and the test console, so the two can
+        // never disagree about what "healthy" means.
+        $this->app->singleton(Diagnostics::class, fn ($app) => new Diagnostics(
+            $app->make(XeroConfig::class),
+            $app->make(TokenManager::class),
+            $app->make(CacheFactory::class),
+        ));
+
         $this->app->alias(XeroBridgeManager::class, 'xero-bridge');
     }
 
@@ -110,6 +123,14 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
         // session and no cookies, which the connect/callback routes require.
         if ($this->app['config']->get('xero-bridge.webhooks.enabled', true)) {
             $this->loadRoutesFrom(__DIR__.'/../routes/webhook.php');
+        }
+
+        // Third flag, third file, deliberately independent of routes.enabled:
+        // a host may register its own connect/callback and still want the
+        // console. The same gate runs again per request as middleware, because
+        // route:cache would otherwise carry the route past this check.
+        if (EnsureConsoleEnabled::enabled($this->app)) {
+            $this->loadRoutesFrom(__DIR__.'/../routes/console.php');
         }
     }
 }

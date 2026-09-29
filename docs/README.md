@@ -12,6 +12,7 @@ The [project README](../README.md) is the overview; these pages are the detail.
 | [4. Webhooks and events](04-webhooks-and-events.md) | The webhook endpoint, signature verification, and the six events the package dispatches |
 | [5. Commands, errors and token lifecycle](05-commands-and-errors.md) | The three Artisan commands, scheduling token refresh, the exception hierarchy, rate limits |
 | [6. Recipes](06-recipes.md) | Complete worked examples, including queued invoice creation and the payment-time buyer-details flow |
+| [7. The test console](07-test-console.md) | The page at `/xero/console` that ships with the package — turning it on and off, who can reach it, the write guard, and all fifteen actions |
 
 ## Start here
 
@@ -42,6 +43,11 @@ These come up repeatedly, so they are worth knowing before you write any code.
 
 5. **Scopes are fixed at authorisation time.** If you add a scope, deploy it *before* anyone
    reconnects, or they will have to connect twice. See [Getting started](01-getting-started.md).
+
+6. **The test console writes only into a Demo Company.** It appears at `/xero/console` as soon as you
+   install the package, in every environment except production. Reads run against whatever is connected,
+   but anything that writes is refused unless the organisation is disposable. See
+   [The test console](07-test-console.md).
 
 ## Conventions in these pages
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Peoplelogy\XeroBridge\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Route;
 use Peoplelogy\XeroBridge\Support\XeroConfig;
 
 class InstallCommand extends Command
@@ -44,6 +45,14 @@ class InstallCommand extends Command
         $this->line('  3. Register this redirect URI on it, exactly:');
         $this->line('     <fg=cyan>'.$this->redirectUri().'</>');
         $this->line('  4. Visit <fg=cyan>'.$this->connectUrl($config).'</> to connect an organisation');
+
+        if (Route::has($config->routeName('console'))) {
+            $this->newLine();
+            $this->line('Test console (on everywhere except production):');
+            $this->line('  <fg=cyan>'.route($config->routeName('console')).'</>');
+            $this->line('  Narrow who can reach it with <fg=yellow>XERO_CONSOLE_MIDDLEWARE</>;');
+            $this->line('  the default, <fg=yellow>web,auth</>, means any authenticated user.');
+        }
 
         $webhookUrl = url((string) $config->get('routes.prefix', 'xero')
             .'/'.(string) $config->get('webhooks.path', 'webhook'));

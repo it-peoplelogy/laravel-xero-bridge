@@ -10,6 +10,57 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-29
+
+Adds a test console to every application that installs the package. Nothing existing changes behaviour:
+the upgrade is `composer update` and, if you want it reachable on a production host or narrower than
+`web,auth`, two environment keys.
+
+### Added
+
+- **A test console at `/xero/console`.** Every application that installs the package now gets a page for
+  exercising the bridge by hand: configuration health, a pre-flight check of the consent flow and the
+  token-refresh lock, every stored connection with its expiry and scopes, the reference lookups you need
+  before a first invoice, and the contact, invoice, payment and email flows — each rendered as JSON with
+  timings and Xero's rate-limit headers.
+
+  Nothing to publish and no build step. It renders as a standalone HTML document, so it looks and
+  behaves the same in an Inertia app, a Livewire app or an API-only one, and cannot disturb your own
+  styling.
+
+  **It is on in every environment except production.** Set `XERO_CONSOLE_ENABLED=true` to allow it on a
+  production host, or `=false` to remove it everywhere. The route is registered only when the console is
+  enabled *and* re-checks the flag on every request, so a `route:cache` built on another box cannot
+  leave the page reachable on a live deployment.
+
+  The default middleware is `web,auth`, which means any authenticated user — narrow it with
+  `XERO_CONSOLE_MIDDLEWARE="web,auth,can:manage-xero"`.
+
+  **Writes are refused unless the connected organisation is disposable.** A Xero Demo Company always is;
+  anything else has to be named in `XERO_CONSOLE_WRITABLE_ORGANISATIONS`, matched on the full name and
+  case-insensitively, never as a substring. The list is empty by default, so out of the box the console
+  can only write into a Demo Company.
+
+  Access tokens, refresh tokens and your client secret never reach the page — credentials are reported
+  as booleans (`client_secret_set: true`) and nothing else.
+
+  See [the console documentation](docs/07-test-console.md).
+
+- **The console view is publishable**, with `php artisan vendor:publish --tag=xero-bridge-views`, for
+  hosts that need to change the markup. A strict `Content-Security-Policy` is the usual reason: the page
+  carries its CSS and JS inline.
+
+- **`xero-bridge:install` now prints the console URL**, and a reminder to narrow its middleware.
+
+### Changed
+
+- **`xero-bridge:status` now shares its reporting with the console**, through a new
+  `Support\Diagnostics`. Its rendered output and its exit codes are unchanged.
+
+  Each connection in the `--json` payload gains three keys: `tenant_type`, `usable` and
+  `last_failure_at`. Existing keys keep their names, values and order, so anything reading the payload
+  by key is unaffected.
+
 ## [1.1.0] - 2026-09-28
 
 Renames three configuration keys and removes a dangerous default. Both changes are visible in
@@ -227,7 +278,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.6...v1.1.0
 [1.0.6]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.5...v1.0.6
 [1.0.5]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.4...v1.0.5

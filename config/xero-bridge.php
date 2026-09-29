@@ -117,6 +117,80 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Test console
+    |--------------------------------------------------------------------------
+    |
+    | A self-contained page at {routes.prefix}/{console.prefix} -- /xero/console
+    | by default -- that exercises the bridge by hand: configuration health,
+    | stored connections, reference lookups, the invoice and contact flows, a
+    | forced token refresh, and every response rendered as JSON with timings
+    | and Xero's rate-limit headers.
+    |
+    | It is ON by default everywhere EXCEPT production, so it is there the
+    | moment the package is installed without ever being a surprise on a live
+    | deployment. It renders as a standalone HTML document with no build step,
+    | so it works the same in any application.
+    |
+    | Note: `php artisan route:cache` bakes in whatever was registered at cache
+    | time, exactly as it does for `routes.enabled`. The console route also
+    | re-checks `enabled` on every request and 404s when it is off, so a cache
+    | built elsewhere cannot leave the page reachable in production.
+    |
+    */
+
+    'console' => [
+        /*
+        | null  => on everywhere except production
+        | true  => on, including production
+        | false => off everywhere
+        |
+        | The environment is deliberately NOT resolved here. A config file is
+        | evaluated once, at `config:cache` time, so baking the decision in
+        | would freeze whichever environment happened to run that command.
+        | Left null, it is resolved at boot instead, on every request.
+        |
+        | An empty value counts as unset, because a bare `XERO_CONSOLE_ENABLED=`
+        | copied out of an example file is not a request to switch it off.
+        */
+        'enabled' => in_array(env('XERO_CONSOLE_ENABLED'), [null, ''], true)
+            ? null
+            : filter_var(env('XERO_CONSOLE_ENABLED'), FILTER_VALIDATE_BOOLEAN),
+
+        // Appended to routes.prefix, so the default is /xero/console.
+        'prefix' => env('XERO_CONSOLE_PREFIX', 'console'),
+
+        /*
+        | Comma separated, like routes.middleware. The console posts a CSRF
+        | token, so it needs something that starts a SESSION. Narrow this to
+        | your own admin gate wherever you have one, e.g.
+        | XERO_CONSOLE_MIDDLEWARE="web,auth,can:manage-xero"
+        */
+        'middleware' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('XERO_CONSOLE_MIDDLEWARE', 'web,auth'))
+        ))),
+
+        /*
+        | Organisations the console may WRITE into, by exact name, comma
+        | separated and matched case-insensitively.
+        |
+        | A Xero Demo Company is always writable -- Xero provisions it itself,
+        | flags it with IsDemoCompany and its data is disposable. Anything else
+        | is somebody's real ledger: a DRAFT can be deleted, but an AUTHORISED
+        | invoice can only ever be voided and stays visible in Xero for good.
+        |
+        | A sandbox organisation you create by hand is indistinguishable from a
+        | real ledger over the API, which is why it has to be named here. Add
+        | one only if you are willing to lose its data.
+        */
+        'writable_organisations' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env('XERO_CONSOLE_WRITABLE_ORGANISATIONS', ''))
+        ))),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Webhooks
     |--------------------------------------------------------------------------
     |

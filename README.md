@@ -328,6 +328,15 @@ XERO_TAX_TYPE=
 # --- HTTP -------------------------------------------------------------------
 XERO_HTTP_TIMEOUT=30
 XERO_HTTP_RETRIES=3
+
+# --- Test console -----------------------------------------------------------
+# On everywhere except production. Set true to allow it on a production host,
+# false to remove it entirely. The default middleware, web,auth, means ANY
+# authenticated user -- narrow it to your own admin gate.
+XERO_CONSOLE_MIDDLEWARE="web,auth"
+# Exact organisation names the console may WRITE into, comma separated. A Xero
+# Demo Company is always writable; anything else is somebody's real ledger.
+XERO_CONSOLE_WRITABLE_ORGANISATIONS=
 ```
 
 ---
@@ -371,6 +380,75 @@ php artisan xero-bridge:status     # what is connected, and how healthy
 > [API limits](https://developer.xero.com/documentation/guides/oauth2/limits/) before onboarding more
 > systems, and keep a record of which applications hold the allowance. Xero's own pages have disagreed
 > on the exact figures, so confirm in the Xero console rather than trusting a number here.
+
+---
+
+## The test console
+
+Installing the package also gives you a page at **`/xero/console`**. Nothing to publish, no build step,
+no assets: it renders as a standalone HTML document, so it looks and behaves the same in an Inertia app,
+a Livewire app or an API-only one, and cannot disturb your own styling.
+
+It shows the configuration health, a pre-flight check of the consent flow and the token-refresh lock,
+every stored connection with its expiry and scopes, and it runs the flows by hand — the reference
+lookups you need before a first invoice, find-or-create contact, create a DRAFT, create and pay, set tax
+numbers and have Xero email an invoice, find and list, force a token refresh, forget a connection. Every
+response comes back as JSON with timings and Xero's rate-limit headers.
+
+Your access tokens, refresh tokens and client secret never reach the page. Credentials are reported as
+booleans (`client_secret_set: true`) and nothing else.
+
+### Turning it on and off
+
+| `XERO_CONSOLE_ENABLED` | Production | Everywhere else |
+|---|---|---|
+| unset (the default) | off | **on** |
+| `true` | on | on |
+| `false` | off | off |
+
+The route is registered only when the console is enabled, *and* the gate is re-checked on every request.
+That second check is what matters: `php artisan route:cache` bakes in whatever routes existed at cache
+time, so a cache built on a staging box and deployed to production would otherwise carry the console
+with it.
+
+### Who can reach it
+
+The default middleware is `web,auth`, which means **any authenticated user**. Narrow it to your own
+admin gate:
+
+```bash
+XERO_CONSOLE_MIDDLEWARE="web,auth,can:manage-xero"
+```
+
+Keep something that starts a **session** in that list. The page posts a CSRF token, and without a session
+there is no CSRF protection on an endpoint that can create invoices.
+
+If your application has no `login` route — an API-only or custom-auth app — the stock `auth` middleware
+throws `RouteNotFoundException` rather than redirecting, so an unauthenticated visit is a 500. Point
+`XERO_CONSOLE_MIDDLEWARE` at a guard that suits you (`web,auth:sanctum`), or define a `login` route.
+
+### The write guard
+
+Reads run against whatever is connected. **Writes are refused** unless the connected organisation is
+either a Xero Demo Company — which Xero provisions itself, flags with `IsDemoCompany`, and whose data is
+disposable — or named explicitly:
+
+```bash
+XERO_CONSOLE_WRITABLE_ORGANISATIONS="Acme Sandbox,Another Sandbox"
+```
+
+Matched on the full name, case-insensitively, never as a substring. The list is empty by default, so out
+of the box only a Demo Company can be written to. A sandbox organisation you create by hand is
+indistinguishable from a real ledger over the API, which is why it has to be named.
+
+### Customising the page
+
+Publish it with `php artisan vendor:publish --tag=xero-bridge-views`. You will normally only need this
+for a strict `Content-Security-Policy`: the page carries its CSS and JS inline, so a policy of
+`script-src 'self'` with no `'unsafe-inline'` leaves it rendered but unstyled and inert, with the
+explanation only in the browser console.
+
+Full detail in [the console documentation](docs/07-test-console.md).
 
 ---
 

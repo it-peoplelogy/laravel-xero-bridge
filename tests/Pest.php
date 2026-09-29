@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 use Peoplelogy\XeroBridge\Models\XeroConnection;
+use Peoplelogy\XeroBridge\Tests\Support\ConsoleDisabledTestCase;
+use Peoplelogy\XeroBridge\Tests\Support\ConsoleTestCase;
 use Peoplelogy\XeroBridge\Tests\Support\CustomPrefixTestCase;
 use Peoplelogy\XeroBridge\Tests\Support\WebRoutesTestCase;
 use Peoplelogy\XeroBridge\Tests\TestCase;
@@ -18,6 +20,8 @@ use Peoplelogy\XeroBridge\Tests\TestCase;
 uses(TestCase::class)->in('Unit');
 uses(WebRoutesTestCase::class)->in('Feature');
 uses(CustomPrefixTestCase::class)->in('Prefix');
+uses(ConsoleTestCase::class)->in('Console');
+uses(ConsoleDisabledTestCase::class)->in('ConsoleDisabled');
 
 /*
 |--------------------------------------------------------------------------
