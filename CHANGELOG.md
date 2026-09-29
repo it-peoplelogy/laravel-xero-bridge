@@ -10,6 +10,60 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-29
+
+Adds an optional Malaysian tax-authority client. Nothing existing changes behaviour and nothing is
+required of you: the module ships disabled, so for everyone outside Malaysia this release is inert.
+
+### Added
+
+- **An optional LHDN MyInvois taxpayer TIN validator, for Malaysia.** It answers one question --
+  is this TIN genuinely paired with this business registration number, NRIC, passport or army
+  number in HASiL's records? -- and answers it with a boolean.
+
+  ```php
+  use Peoplelogy\XeroBridge\MyInvois\Facades\MyInvois;
+  use Peoplelogy\XeroBridge\MyInvois\IdType;
+
+  $valid = MyInvois::validate('C25845632020', IdType::BRN, '201901234567');
+  ```
+
+  **Nothing existing changes behaviour.** The module ships **disabled**: it registers no route,
+  requires no configuration, adds no startup cost and does not appear in `xero-bridge:status` or
+  the test console. If you are not in Malaysia, upgrading changes nothing for you.
+
+  To switch it on, set `MYINVOIS_ENABLED=true` with a client id and secret from the MyInvois
+  portal's ERP registration, then `php artisan config:clear`. Settings live in their **own**
+  `config/myinvois.php` with its **own** `myinvois-config` publish tag, so republishing either
+  config can never overwrite the other.
+
+  Two things worth knowing before you use it. Since **1 August 2026** LHDN validates the TIN and
+  the identifier *as a pair*, so you must pass both and a valid TIN with a stale registration
+  number now fails exactly like a fabricated one. And a positive answer proves the pair exists in
+  HASiL's records and nothing more -- the endpoint returns no name and no address, so it is not
+  identity verification.
+
+  A negative answer is **not** an exception: HTTP 404 means "no such pair", which is the answer you
+  asked for, so it comes back as `false`. Everything else throws `MyInvoisException`, which carries
+  LHDN's error envelope and two predicates, `isRetryable()` and `isConfigurationProblem()`. It is
+  deliberately not a `XeroBridgeException`, so `catch (XeroBridgeException)` around your Xero work
+  cannot swallow an LHDN fault.
+
+  Access tokens are cached, which is mandatory rather than an optimisation -- LHDN allows only 12
+  token requests per minute. Validation results are **not** cached by default; two asymmetric TTLs
+  are available if you want them.
+
+  See [the MyInvois documentation](docs/08-myinvois-tin-validation.md).
+
+- **Two test console actions**, `myinvois.validate` and `myinvois.forget_token`, with a panel for
+  running a validation by hand. Both appear only while the module is enabled.
+
+### Changed
+
+- **`composer.json`'s description now names both APIs.** The package is still overwhelmingly a Xero
+  wrapper, but a Malaysian tax-authority client living inside it should be discoverable from
+  `composer show` rather than a surprise.
+
 ## [1.2.0] - 2026-09-29
 
 Adds a test console to every application that installs the package. Nothing existing changes behaviour:
@@ -278,7 +332,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.6...v1.1.0
 [1.0.6]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.0.5...v1.0.6

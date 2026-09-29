@@ -772,6 +772,13 @@
                     <div class="fields"><button type="button" class="danger" data-run="connection.forget" data-confirm="Delete the stored connection row? You will have to reconnect.">Forget connection</button></div>
                 </div>
             </section>
+
+            {{-- A different API and a different authority. Rendered only when the
+                 module is switched on, so this console looks exactly as it did
+                 for anyone outside Malaysia. --}}
+            @if ($myInvoisEnabled)
+                @include('xero-bridge::console.myinvois')
+            @endif
         </div>
 
         {{-- right: the result --}}

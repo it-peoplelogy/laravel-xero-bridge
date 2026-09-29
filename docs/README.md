@@ -12,7 +12,8 @@ The [project README](../README.md) is the overview; these pages are the detail.
 | [4. Webhooks and events](04-webhooks-and-events.md) | The webhook endpoint, signature verification, and the six events the package dispatches |
 | [5. Commands, errors and token lifecycle](05-commands-and-errors.md) | The three Artisan commands, scheduling token refresh, the exception hierarchy, rate limits |
 | [6. Recipes](06-recipes.md) | Complete worked examples, including queued invoice creation and the payment-time buyer-details flow |
-| [7. The test console](07-test-console.md) | The page at `/xero/console` that ships with the package — turning it on and off, who can reach it, the write guard, and all fifteen actions |
+| [7. The test console](07-test-console.md) | The page at `/xero/console` that ships with the package — turning it on and off, who can reach it, the write guard, and every action |
+| [8. MyInvois TIN validation](08-myinvois-tin-validation.md) | Optional, off by default: validating a Malaysian taxpayer's TIN against LHDN's MyInvois API |
 
 ## Start here
 
@@ -20,7 +21,7 @@ If you are wiring this into an application for the first time, read
 [Getting started](01-getting-started.md) end to end, then jump to
 [Recipes](06-recipes.md) and adapt the example closest to your use case.
 
-## Five things that catch people out
+## Things that catch people out
 
 These come up repeatedly, so they are worth knowing before you write any code.
 
@@ -44,7 +45,11 @@ These come up repeatedly, so they are worth knowing before you write any code.
 5. **Scopes are fixed at authorisation time.** If you add a scope, deploy it *before* anyone
    reconnects, or they will have to connect twice. See [Getting started](01-getting-started.md).
 
-6. **The test console writes only into a Demo Company.** It appears at `/xero/console` as soon as you
+6. **A MyInvois TIN check needs the BRN too.** Since 1 August 2026 LHDN validates the TIN and the
+   identifier as a *pair*, so a valid TIN with a stale registration number fails exactly like a
+   fabricated one. See [MyInvois TIN validation](08-myinvois-tin-validation.md).
+
+7. **The test console writes only into a Demo Company.** It appears at `/xero/console` as soon as you
    install the package, in every environment except production. Reads run against whatever is connected,
    but anything that writes is refused unless the organisation is disposable. See
    [The test console](07-test-console.md).

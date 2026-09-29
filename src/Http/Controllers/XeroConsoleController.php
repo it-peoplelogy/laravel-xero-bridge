@@ -19,6 +19,10 @@ use Peoplelogy\XeroBridge\Exceptions\XeroServiceUnavailableException;
 use Peoplelogy\XeroBridge\Exceptions\XeroValidationException;
 use Peoplelogy\XeroBridge\Facades\XeroBridge;
 use Peoplelogy\XeroBridge\Filters\InvoiceFilter;
+use Peoplelogy\XeroBridge\MyInvois\IdType;
+use Peoplelogy\XeroBridge\MyInvois\MyInvoisClient;
+use Peoplelogy\XeroBridge\MyInvois\MyInvoisConfig;
+use Peoplelogy\XeroBridge\MyInvois\MyInvoisException;
 use Peoplelogy\XeroBridge\Support\Diagnostics;
 use Peoplelogy\XeroBridge\Support\XeroConfig;
 use RuntimeException;
@@ -93,6 +97,8 @@ class XeroConsoleController extends Controller
     public function __construct(
         private readonly Diagnostics $diagnostics,
         private readonly XeroConfig $config,
+        private readonly MyInvoisConfig $myInvois,
+        private readonly MyInvoisClient $myInvoisClient,
     ) {}
 
     /**
@@ -101,7 +107,10 @@ class XeroConsoleController extends Controller
     public function index(Request $request): View
     {
         return view('xero-bridge::console', [
-            'actions' => self::ACTIONS,
+            'actions' => $this->actions(),
+            'myInvoisEnabled' => $this->myInvois->enabled(),
+            'myInvoisProblems' => $this->myInvois->problems(),
+            'myInvoisIdTypes' => IdType::cases(),
             'writableOrganisations' => $this->writableOrganisations(),
             'boot' => $this->diagnostics->snapshot(),
             'runUrl' => route($this->config->routeName('console.run')),
@@ -123,7 +132,7 @@ class XeroConsoleController extends Controller
     public function run(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'action' => ['required', 'string', 'in:'.implode(',', array_keys(self::ACTIONS))],
+            'action' => ['required', 'string', 'in:'.implode(',', array_keys($this->actions()))],
             'connection' => ['nullable', 'string', 'max:64', 'regex:/^[A-Za-z0-9._-]+$/'],
             'params' => ['array'],
         ]);
@@ -144,7 +153,7 @@ class XeroConsoleController extends Controller
                 'action' => $action,
                 'connection' => $key,
                 'duration_ms' => $this->elapsed($startedAt),
-                'rate_limit' => $this->rateLimit($key),
+                'rate_limit' => $this->rateLimit($action, $key),
                 'count' => (is_array($data) && array_is_list($data)) ? count($data) : null,
                 'data' => $data,
             ]);
@@ -156,7 +165,7 @@ class XeroConsoleController extends Controller
                 'action' => $action,
                 'connection' => $key,
                 'duration_ms' => $this->elapsed($startedAt),
-                'rate_limit' => $this->rateLimit($key),
+                'rate_limit' => $this->rateLimit($action, $key),
                 'error' => $this->describeError($e),
             ]);
         }
@@ -171,6 +180,12 @@ class XeroConsoleController extends Controller
      */
     private function dispatch(string $action, string $key, array $p): mixed
     {
+        // FIRST, before XeroBridge::connection() is touched. MyInvois has no
+        // Xero connection and must work on a host that has never connected one.
+        if (str_starts_with($action, 'myinvois.')) {
+            return $this->dispatchMyInvois($action, $p);
+        }
+
         $bridge = XeroBridge::connection($key);
 
         // One gate for every Xero-mutating action, rather than a check repeated
@@ -765,6 +780,15 @@ class XeroConsoleController extends Controller
             $out['limit_problem'] = $e->limitProblem();
         }
 
+        if ($e instanceof MyInvoisException) {
+            $out['status'] = $e->statusCode();
+            $out['correlation_id'] = $e->correlationId();
+            $out['error_code'] = $e->errorCode();
+            $out['error_ms'] = $e->errorMalay();
+            $out['retry_after'] = $e->retryAfter();
+            $out['context'] = $e->context() ?: null;
+        }
+
         return array_filter($out, static fn ($v) => $v !== null && $v !== []);
     }
 
@@ -778,17 +802,117 @@ class XeroConsoleController extends Controller
             $e instanceof XeroRateLimitException => 'Back off and retry. Minute and daily limits carry a Retry-After; a concurrency limit carries none.',
             $e instanceof XeroValidationException => 'Xero rejected the request. See validation_errors for the element it objected to.',
             $e instanceof XeroServiceUnavailableException => 'Xero reports the organisation offline, or the API is down. Retry in a few minutes.',
+            $e instanceof MyInvoisException && $e->isConfigurationProblem() => 'Fix the MYINVOIS_* keys in .env, then run `php artisan config:clear`. LHDN blocks a Client ID that repeatedly sends bad credentials, so do not simply retry.',
+            $e instanceof MyInvoisException && $e->isRetryable() => 'LHDN is rate-limiting or unavailable. This endpoint allows 60 requests per minute per Client ID; back off and retry.',
+            $e instanceof MyInvoisException => 'LHDN rejected the request itself. A 400 means the request was malformed -- check the idType and that neither value is blank.',
             $e instanceof InvalidArgumentException => 'Fill in the field this action needs, then run it again.',
             default => null,
         };
     }
 
     /**
+     * The rate limit belonging to whichever API the action actually called.
+     *
+     * Reporting Xero's remaining quota after a MyInvois call would be worse
+     * than reporting nothing: the number is real, just about the wrong API.
+     *
      * @return array<string, mixed>|null
      */
-    private function rateLimit(string $key): ?array
+    private function rateLimit(string $action, string $key): ?array
     {
+        if (str_starts_with($action, 'myinvois.')) {
+            return $this->myInvoisClient->lastRateLimit();
+        }
+
         return XeroBridge::connection($key)->client()->lastRateLimit()?->toArray();
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* MyInvois */
+    /* ------------------------------------------------------------------ */
+
+    /**
+     * The allow-list, plus the MyInvois entries ONLY while the module is on.
+     *
+     * Built rather than declared so a consumer who never enables MyInvois sees
+     * no extra actions, no extra panel and no change to the "Actions this
+     * console is allowed to run (n)" count. The `in:` validation rule reads the
+     * same list, so a disabled action is rejected by validation rather than
+     * reaching a branch that would have to explain itself.
+     *
+     * @return array<string, array{label: string, writes?: bool, xero_writes?: bool}>
+     */
+    private function actions(): array
+    {
+        if (! $this->myInvois->enabled()) {
+            return self::ACTIONS;
+        }
+
+        return self::ACTIONS + [
+            'myinvois.validate' => ['label' => 'LHDN MyInvois: validate a taxpayer TIN'],
+            'myinvois.forget_token' => ['label' => 'LHDN MyInvois: drop the cached access token', 'writes' => true],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $p
+     * @return array<string, mixed>
+     */
+    private function dispatchMyInvois(string $action, array $p): array
+    {
+        return match ($action) {
+            'myinvois.validate' => $this->validateTin($p),
+
+            'myinvois.forget_token' => $this->forgetMyInvoisToken(),
+
+            default => throw new InvalidArgumentException(
+                "Action [{$action}] is allow-listed but has no branch in dispatchMyInvois()."
+            ),
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $p
+     * @return array<string, mixed>
+     */
+    private function validateTin(array $p): array
+    {
+        $tin = $this->need($p, 'tin');
+        $idType = $this->str($p, 'id_type') ?: IdType::BRN->value;
+        $idValue = $this->need($p, 'id_value');
+
+        $matched = $this->myInvoisClient->validate($tin, $idType, $idValue);
+
+        return [
+            'tin' => $tin,
+            'id_type' => IdType::coerce($idType)->value,
+            'id_value' => $idValue,
+            'matched' => $matched,
+            'environment' => $this->myInvois->environment(),
+            'note' => $matched
+                ? 'HASiL holds this TIN paired with this identifier. That is ALL a 200 proves: the '
+                    .'endpoint returns no name and no address, so this is not evidence that the pair '
+                    .'belongs to the customer you are invoicing.'
+                : 'HASiL has no record of this TIN paired with this identifier. Since 1 August 2026 '
+                    .'the pair is validated together, so a valid TIN with a stale or mistyped '
+                    .'registration number answers exactly like this.',
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function forgetMyInvoisToken(): array
+    {
+        $this->myInvois->assertUsable();
+        $this->myInvoisClient->forgetToken();
+
+        return [
+            'forgotten' => true,
+            'note' => 'The cached access token was dropped. The next validation acquires a new one. '
+                .'Worth doing after rotating the client secret, which otherwise leaves a '
+                .'valid-looking token in the cache until it expires on its own.',
+        ];
     }
 
     private function elapsed(float $startedAt): int

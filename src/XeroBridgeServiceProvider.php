@@ -15,6 +15,8 @@ use Peoplelogy\XeroBridge\Commands\RefreshTokensCommand;
 use Peoplelogy\XeroBridge\Commands\StatusCommand;
 use Peoplelogy\XeroBridge\Contracts\ConnectionRepository;
 use Peoplelogy\XeroBridge\Http\Middleware\EnsureConsoleEnabled;
+use Peoplelogy\XeroBridge\MyInvois\MyInvoisClient;
+use Peoplelogy\XeroBridge\MyInvois\MyInvoisConfig;
 use Peoplelogy\XeroBridge\OAuth\AuthorizationUrlBuilder;
 use Peoplelogy\XeroBridge\OAuth\IdentityClient;
 use Peoplelogy\XeroBridge\OAuth\OAuthStateStore;
@@ -108,6 +110,40 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
         ));
 
         $this->app->alias(XeroBridgeManager::class, 'xero-bridge');
+
+        $this->registerMyInvois();
+    }
+
+    /**
+     * The MyInvois module: LHDN Malaysia taxpayer TIN validation.
+     *
+     * A separate concern from Xero and kept at arm's length -- its own config
+     * file, its own namespace, its own exception, and no Xero class touches it.
+     *
+     * The config is merged HERE rather than through spatie's hasConfigFile(),
+     * which would publish it under the shared `xero-bridge-config` tag. Sharing
+     * that tag means `vendor:publish --tag=xero-bridge-config --force` silently
+     * overwrites this file too, and a stale published config is exactly how a
+     * renamed key goes unnoticed.
+     *
+     * Both bindings are registered even when the module is DISABLED, on
+     * purpose. Gating them would turn "MyInvois is off" into a
+     * BindingResolutionException thrown from deep inside the container; leaving
+     * them bound means the client throws one line naming MYINVOIS_ENABLED.
+     */
+    private function registerMyInvois(): void
+    {
+        $this->mergeConfigFrom(__DIR__.'/../config/myinvois.php', 'myinvois');
+
+        $this->app->singleton(MyInvoisConfig::class, fn ($app) => new MyInvoisConfig(
+            $app->make(ConfigRepository::class),
+        ));
+
+        $this->app->singleton(MyInvoisClient::class, fn ($app) => new MyInvoisClient(
+            $app->make(MyInvoisConfig::class),
+            $app->make(HttpFactory::class),
+            $app->make(CacheFactory::class),
+        ));
     }
 
     public function packageBooted(): void
@@ -131,6 +167,18 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
         // route:cache would otherwise carry the route past this check.
         if (EnsureConsoleEnabled::enabled($this->app)) {
             $this->loadRoutesFrom(__DIR__.'/../routes/console.php');
+        }
+
+        // Its OWN tag, so republishing the Xero config can never overwrite this
+        // file and vice versa. spatie's hasConfigFile() would put both under
+        // `xero-bridge-config`, which is one --force away from losing one of
+        // them. Registered regardless of whether the module is enabled: a host
+        // switching it on should not also have to guess that the config exists.
+        if ($this->app->runningInConsole()) {
+            $this->publishes(
+                [__DIR__.'/../config/myinvois.php' => config_path('myinvois.php')],
+                'myinvois-config',
+            );
         }
     }
 }

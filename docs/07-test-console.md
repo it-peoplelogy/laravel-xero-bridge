@@ -136,7 +136,7 @@ cannot lock across processes, connections with recent transient failures. Both s
 
 ## The actions
 
-Fifteen, on an explicit allow-list. Anything not on it is rejected by validation, so a value posted from
+Fifteen, on an explicit allow-list, plus two more when the MyInvois module is switched on. Anything not on it is rejected by validation, so a value posted from
 a browser can never reach an arbitrary method.
 
 | Action | Call | Writes |
@@ -156,6 +156,12 @@ a browser can never reach an arbitrary method.
 | `invoices.list` | `GET /Invoices` | |
 | `tokens.refresh` | `POST identity/connect/token` | local |
 | `connection.forget` | none | local |
+| `myinvois.validate` † | `GET /api/v1.0/taxpayer/validate/{tin}` (LHDN) | |
+| `myinvois.forget_token` † | none — local cache only | local |
+
+† Present **only** while the MyInvois module is enabled. It is off by default, so a console outside
+Malaysia lists neither the panel nor these two actions. See
+[MyInvois TIN validation](08-myinvois-tin-validation.md).
 
 **Suggested first run.** Connect an organisation, then Organisation (proves the token works), Chart of
 accounts (gives you real account codes), Tax rates (gives you real `TaxType` codes), List invoices

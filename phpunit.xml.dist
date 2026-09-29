@@ -40,6 +40,18 @@
         <env name="XERO_CLIENT_SECRET" value="test-client-secret" force="true"/>
         <env name="XERO_WEBHOOK_KEY" value="test-webhook-key" force="true"/>
         <env name="XERO_REDIRECT_URI" value="https://example.test/xero/callback" force="true"/>
+
+        <!--
+            Same reasoning, and it bites harder here: the developer working on
+            the MyInvois module is the single likeliest person to have real LHDN
+            credentials exported in their shell, and MYINVOIS_ENABLED=false is
+            the shipped default the suite must keep proving. Forced, so neither
+            can leak in.
+        -->
+        <env name="MYINVOIS_ENABLED" value="false" force="true"/>
+        <env name="MYINVOIS_ENVIRONMENT" value="sandbox" force="true"/>
+        <env name="MYINVOIS_CLIENT_ID" value="test-myinvois-client-id" force="true"/>
+        <env name="MYINVOIS_CLIENT_SECRET" value="test-myinvois-client-secret" force="true"/>
     </php>
 
     <source>

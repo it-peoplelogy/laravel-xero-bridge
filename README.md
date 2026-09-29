@@ -10,6 +10,12 @@ your application decides when to invoice and what to put on the invoice.
 Not covered: Payroll, Files, Projects, Assets. Anything the package has not wrapped is still reachable
 through `XeroBridge::request()`.
 
+It also ships one thing that is **not** Xero: an optional, disabled-by-default client for LHDN
+Malaysia's MyInvois **taxpayer TIN validation**, because the TIN and business registration number it
+checks are the same two values this bridge writes onto a Xero contact. It shares no code with the Xero
+side, lives in its own namespace and config file, and is inert unless you switch it on. See
+[MyInvois TIN validation](docs/08-myinvois-tin-validation.md).
+
 ---
 
 ## Support matrix
@@ -375,6 +381,16 @@ XERO_CONSOLE_MIDDLEWARE="web,auth"
 # Exact organisation names the console may WRITE into, comma separated. A Xero
 # Demo Company is always writable; anything else is somebody's real ledger.
 XERO_CONSOLE_WRITABLE_ORGANISATIONS=
+
+# --- MyInvois TIN validation (Malaysia) -------------------------------------
+# Off by default. Nothing below matters unless this is true.
+MYINVOIS_ENABLED=false
+# sandbox or production. Each issues its OWN client id and secret, so switching
+# this without also switching those is a misconfiguration, not a promotion.
+MYINVOIS_ENVIRONMENT=sandbox
+# From the MyInvois portal, under the taxpayer's ERP registration.
+MYINVOIS_CLIENT_ID=
+MYINVOIS_CLIENT_SECRET=
 ```
 
 ---
@@ -490,6 +506,52 @@ for a strict `Content-Security-Policy`: the page carries its CSS and JS inline, 
 explanation only in the browser console.
 
 Full detail in [the console documentation](docs/07-test-console.md).
+
+---
+
+## MyInvois TIN validation (Malaysia, off by default)
+
+Malaysian e-invoicing requires a buyer's TIN to be real. LHDN's MyInvois API answers that question,
+and this package ships a small client for it:
+
+```php
+use Peoplelogy\XeroBridge\MyInvois\Facades\MyInvois;
+use Peoplelogy\XeroBridge\MyInvois\IdType;
+
+$valid = MyInvois::validate('C25845632020', IdType::BRN, '201901234567');
+```
+
+`true` if HASiL holds that TIN paired with that identifier, `false` if it does not. A negative answer
+is **not** an exception — it is the answer you asked for.
+
+**You must pass both values.** Since 1 August 2026 LHDN validates the TIN and the identifier as a
+*pair*, so a valid TIN submitted with a stale registration number fails exactly like a fabricated one.
+
+**A match proves the pair exists in HASiL's records and nothing more.** The endpoint returns no name
+and no address, so it is not identity verification.
+
+### Turning it on
+
+```bash
+MYINVOIS_ENABLED=true
+MYINVOIS_ENVIRONMENT=sandbox
+MYINVOIS_CLIENT_ID=...
+MYINVOIS_CLIENT_SECRET=...
+```
+
+then `php artisan config:clear`. Optionally publish the annotated config:
+
+```bash
+php artisan vendor:publish --tag=myinvois-config
+```
+
+Note this is a **separate tag** from `xero-bridge-config`, and `xero-bridge:install` does not run it —
+so republishing one config can never overwrite the other.
+
+With it on, the [test console](docs/07-test-console.md) grows a panel for running a validation by hand.
+
+Full detail, including caching, the error contract and troubleshooting, is in
+[the MyInvois documentation](docs/08-myinvois-tin-validation.md).
 
 ---
 

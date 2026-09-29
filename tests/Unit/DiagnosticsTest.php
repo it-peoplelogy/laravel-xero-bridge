@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Cache\Repository;
 use Illuminate\Contracts\Cache\Store;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Cache;
 use Peoplelogy\XeroBridge\Support\Diagnostics;
 
@@ -283,4 +284,56 @@ it('returns null for a URL whose route is not registered', function () {
         ->and($urls['webhook'])->toBeNull()
         // connectUrl() falls back to a plain path, so guidance stays useful.
         ->and($urls['connect'])->toBe('/xero/connect/default');
+});
+
+/*
+|--------------------------------------------------------------------------
+| MyInvois must stay invisible here
+|--------------------------------------------------------------------------
+|
+| Diagnostics feeds both the console status panel and xero-bridge:status, and
+| the command is what consumers wire to monitoring. A Malaysia-only module that
+| most installations will never enable must not appear in either -- not as a
+| missing-config entry, not as a warning, and above all not as a non-zero exit
+| code that pages somebody.
+*/
+
+it('never reports MyInvois to a consumer who has not enabled it', function () {
+    config()->set('myinvois.enabled', false);
+    config()->set('myinvois.client_id', null);
+    config()->set('myinvois.client_secret', null);
+
+    $diagnostics = diagnostics();
+
+    expect(json_encode($diagnostics->missingConfig()))->not->toContain('MYINVOIS')
+        ->and(json_encode($diagnostics->warnings([])))->not->toContain('MYINVOIS')
+        ->and(json_encode($diagnostics->environment()))->not->toContain('myinvois');
+});
+
+it('keeps xero-bridge:status silent and green about MyInvois', function () {
+    config()->set('myinvois.enabled', false);
+    config()->set('myinvois.client_id', null);
+    config()->set('myinvois.client_secret', null);
+
+    connection();
+
+    Artisan::call('xero-bridge:status');
+
+    expect(Artisan::output())->not->toContain('MyInvois')
+        ->not->toContain('MYINVOIS');
+
+    expect(Artisan::call('xero-bridge:status'))->toBe(0);
+});
+
+it('stays silent even when MyInvois is enabled but unconfigured', function () {
+    // The Xero command reports on Xero. A broken LHDN configuration is the
+    // console panel's business, not something that should turn a Xero health
+    // check red.
+    config()->set('myinvois.enabled', true);
+    config()->set('myinvois.client_id', null);
+
+    connection();
+
+    expect(Artisan::call('xero-bridge:status'))->toBe(0);
+    expect(Artisan::output())->not->toContain('MYINVOIS');
 });

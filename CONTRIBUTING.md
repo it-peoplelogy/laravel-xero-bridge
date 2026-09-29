@@ -61,6 +61,10 @@ None of this is discoverable from a green run on a PHP 8.4 laptop, which is why 
 > go in `workbench/.env`, which is gitignored. `testbench.yaml` is committed and must stay free of
 > secrets.
 
+Exercising the **MyInvois** panel by hand needs `MYINVOIS_ENABLED=true` plus a sandbox client id and
+secret in that same gitignored file. Use `MYINVOIS_ENVIRONMENT=sandbox` and the preprod host — LHDN
+issues separate ids per environment, and production is somebody's statutory tax record.
+
 ## Releasing
 
 1. Move the `## [Unreleased]` entries under a new version heading with today's date.
