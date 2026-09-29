@@ -191,6 +191,77 @@ only upstream changes, this costs nothing.
 > correctly-named value was ignored and every invoice line posted to account `200` — whatever that
 > happens to be in that organisation. Nothing errors. Nobody finds out until Finance reconciles.
 
+### If Composer fails with "dubious ownership"
+
+On a server, `composer require`, `composer update` or `composer install` can stop with:
+
+```
+In GitDownloader.php line 241:
+
+  Failed to execute git show-ref --head -d
+
+  fatal: detected dubious ownership in repository at
+  '/var/www/html/your-app/vendor/peoplelogy/laravel-xero-bridge'
+```
+
+Nothing is wrong with the package, and nothing is wrong with your repository.
+
+**Why it happens.** Composer installs a package either as a *dist* (a plain archive) or as a *source*
+(a real `git clone`). Only the source form has a `.git` directory, and only then does Composer run
+`git` commands such as `git show-ref` inside `vendor/`. Since 2022 Git refuses to operate on a
+repository owned by a different user than the one running it — the protection added for CVE-2022-24765
+— so the moment the directory belongs to `root` (or to whoever last deployed) and Composer runs as
+someone else, Git stops rather than trusting it.
+
+You will only see this if your application asks for the source form:
+
+```json
+"config": {
+    "preferred-install": {
+        "peoplelogy/laravel-xero-bridge": "source",
+        "*": "dist"
+    }
+}
+```
+
+**The fix.** Delete the clone and let Composer put it back, as the user who owns the deployment:
+
+```bash
+cd /var/www/html/your-app
+
+ls -ld vendor/peoplelogy/laravel-xero-bridge    # who owns it
+whoami                                          # who you are
+
+sudo rm -rf vendor/peoplelogy/laravel-xero-bridge
+composer install
+```
+
+`composer install` is the right command here even though something looks broken. It reinstalls from
+`composer.lock` without re-resolving anything, and the new directory belongs to the user who ran it, so
+the ownership mismatch is gone rather than worked around.
+
+Git will also suggest `git config --global --add safe.directory …`. That does clear the error, but it
+records an exception for one path, has to be repeated for every package and every server, and leaves
+the ownership itself wrong — which will surface again the next time a deploy runs as a different user.
+
+**The permanent fix** is to stop asking for the source form on servers. `source` exists so you can edit
+a package in place inside `vendor/`, which is a local development convenience and no use in a
+deployment. Dropping it removes this failure entirely:
+
+```json
+"config": {
+    "preferred-install": {
+        "*": "dist"
+    }
+}
+```
+
+> **Do not run `composer require` on a server.** It rewrites `composer.json`, so the file on the server
+> no longer matches the one in your repository and the next `git pull` conflicts. Deployments should run
+> `composer install --no-dev --optimize-autoloader`, which reads `composer.lock` and changes nothing
+> else. Use `composer require` and `composer update` on a developer machine, commit the result, and let
+> the server install it.
+
 ---
 
 ## Uninstalling
