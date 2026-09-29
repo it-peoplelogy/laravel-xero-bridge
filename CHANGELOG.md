@@ -10,6 +10,25 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+### Changed
+
+- **The Laravel 11 end-of-life notice in the README is now four sentences and a link**, rather than a
+  page restating Laravel's release policy.
+
+  What it said was accurate when written and would not have stayed that way: it named a specific
+  date, a specific advisory, and four specific patch versions, none of which this package is in a
+  position to keep current. A security statement that quietly goes stale is worse than none, because
+  a reader has no way to tell. It now links to Laravel's own support policy, which does stay current,
+  and keeps only the part that is genuinely about this package: Laravel 11 is best-effort, its CI legs
+  are non-blocking, and a `composer update` refused over an advisory is a fact about the consuming
+  application rather than about the bridge.
+
+  For the record, since the detail is now out of the README: Laravel 11 stopped receiving security
+  fixes on 12 March 2026. Three advisories affect the whole 11.x line, including CVE-2026-48019, a
+  high-severity CRLF injection in the default email validation rule, fixed in 12.60.0 / 12.61.1 /
+  13.10.0 / 13.12.0 and not backported.
+
+
 ## [1.4.2] - 2026-09-29
 
 ### Fixed

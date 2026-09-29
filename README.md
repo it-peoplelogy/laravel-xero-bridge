@@ -30,33 +30,17 @@ Every cell except the impossible one runs in CI on every push.
 
 > ### ⚠️ Laravel 11 is End of Life
 >
-> Laravel 11 stopped receiving **security** fixes on **12 March 2026**. Three advisories affect the
-> entire 11.x line — including [CVE-2026-48019](https://github.com/advisories/GHSA-5vg9-5847-vvmq), a
-> high-severity CRLF injection in the default email validation rule — and they are fixed only in
-> 12.60.0 / 12.61.1 / 13.10.0 / 13.12.0. They will not be backported, so **Composer refuses to install
-> Laravel 11 unless you disable its advisory policy.**
+> Laravel 11 receives no further security fixes, so it is supported here on a **best-effort** basis:
+> the CI legs run and pass, but they are non-blocking.
 >
-> The package still installs and its tests still pass on Laravel 11, and CI keeps running those legs so
-> the compatibility claim is real — but they are non-blocking, and the version is supported on a
-> best-effort basis only.
+> Because unpatched advisories affect the whole 11.x line, Composer may refuse a full
+> `composer update` on a Laravel 11 application. That is a signal about **your** application, not
+> about this package, and `--no-security-blocking` or `policy.advisories.block false` silence it
+> without fixing it. `composer require` makes a minimal change and usually still succeeds.
 >
-> **This affects your own `composer update`, not just ours.** `composer require` makes a minimal change
-> and usually will not re-resolve `laravel/framework`, so adding this package to a Laravel 11
-> application normally succeeds. A *full* `composer update` re-resolves everything and can then be
-> refused outright:
->
-> ```
-> found laravel/framework[v11.56.1] but these were not loaded, because they are
-> affected by security advisories (...). Go to https://packagist.org/security-advisories/
-> ```
->
-> Recent Composer versions accept `--no-security-blocking` as an escape hatch, and
-> `composer config policy.advisories.block false` disables the check entirely — but both silence a real
-> signal about your own application. The actual fix is upgrading off Laravel 11.
->
-> **If you are on Laravel 11, upgrade to 12 or 13.** That is a security fix for your application, not a
-> requirement of this package. Laravel documents an 11 → 12 upgrade as typically a day or less, and
-> describes 12 → 13 as a minor upgrade for most applications.
+> See [Laravel's support policy](https://laravel.com/docs/releases#support-policy) for current dates
+> and versions, and upgrade when you can — that is a fix for your application, not a requirement of
+> this package.
 
 ---
 
