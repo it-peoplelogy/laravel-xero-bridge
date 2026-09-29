@@ -94,8 +94,27 @@ return new class extends Migration
             $table->string('owner_type', 191)->nullable();
             $table->string('owner_id', 64)->nullable();
 
-            $table->timestamp('first_checked_at');
-            $table->timestamp('last_checked_at')->index();
+            /*
+             * useCurrent() is not cosmetic and must not be "tidied" away.
+             *
+             * MySQL gives the FIRST timestamp column in a table an implicit
+             * DEFAULT CURRENT_TIMESTAMP **ON UPDATE CURRENT_TIMESTAMP**, and
+             * gives every later one an implicit default of the zero date --
+             * which strict mode then rejects outright with
+             * "Invalid default value", so the table cannot even be created.
+             *
+             * Naming a default explicitly fixes both: the column keeps NOT
+             * NULL, the migration runs, and no column silently rewrites itself
+             * when the row is updated. That second half is the one that would
+             * have hurt: these columns are written once and read as evidence,
+             * and an implicit ON UPDATE would quietly turn "first" into "last".
+             *
+             * sqlite does not do any of this, so the test suite cannot catch
+             * it. See tests/Unit/MigrationTimestampTest.php, which reads these
+             * files as text for exactly that reason.
+             */
+            $table->timestamp('first_checked_at')->useCurrent();
+            $table->timestamp('last_checked_at')->useCurrent()->index();
             $table->unsignedInteger('check_count')->default(1);
 
             $table->index(['owner_type', 'owner_id']);

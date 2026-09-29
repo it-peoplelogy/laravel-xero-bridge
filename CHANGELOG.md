@@ -10,6 +10,39 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.4.2] - 2026-09-29
+
+### Fixed
+
+- **`php artisan migrate` failed on MySQL** with `SQLSTATE[42000] ... 1067 Invalid default value for
+  'last_checked_at'`. The four new tables could not be created at all. Republish the migrations and
+  run `migrate` again:
+
+  ```bash
+  php artisan vendor:publish --tag=xero-bridge-migrations --force
+  php artisan vendor:publish --tag=myinvois-migrations --force
+  php artisan migrate
+  ```
+
+  MySQL treats a `TIMESTAMP NOT NULL` column with no explicit default in two different ways, and both
+  were biting. Every column after the first gets an implicit zero-date default, which strict mode
+  rejects outright -- that is the error above, and it is the loud half.
+
+  The quiet half was worse and had not been noticed yet: the **first** such column in a table gets
+  `DEFAULT CURRENT_TIMESTAMP` **`ON UPDATE CURRENT_TIMESTAMP`**. Every one of these columns is written
+  once and then read as evidence, so MySQL would have silently rewritten `claimed_at` each time a
+  write claim was confirmed, `first_seen_at` on every webhook replay, and `first_checked_at` on every
+  re-check. That would have turned "first" into "last" with no error anywhere -- and it would have
+  disabled stuck-claim detection entirely, because `scopeStuck()` compares `claimed_at` against an
+  hour ago and `claimed_at` would never have been more than a moment old.
+
+  Naming the default explicitly fixes both, and the columns keep `NOT NULL`.
+
+  The test suite could not have caught this: it runs against in-memory sqlite, which has none of this
+  behaviour. `tests/Unit/MigrationTimestampTest.php` now reads the migration stubs as text and fails
+  if a non-nullable timestamp column is missing an explicit default, which is the only way to assert
+  it without a MySQL connection in CI.
+
 ## [1.4.1] - 2026-09-29
 
 ### Fixed
@@ -465,7 +498,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.1...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.2...HEAD
+[1.4.2]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.2.0...v1.3.0

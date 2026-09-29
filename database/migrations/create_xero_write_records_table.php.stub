@@ -87,7 +87,26 @@ return new class extends Migration
             // Sent to Xero on the write, for the six minutes it honours it.
             $table->string('idempotency_key', 128)->nullable();
 
-            $table->timestamp('claimed_at')->index();
+            /*
+             * useCurrent() is not cosmetic and must not be "tidied" away.
+             *
+             * MySQL gives the FIRST timestamp column in a table an implicit
+             * DEFAULT CURRENT_TIMESTAMP **ON UPDATE CURRENT_TIMESTAMP**, and
+             * gives every later one an implicit default of the zero date --
+             * which strict mode then rejects outright with
+             * "Invalid default value", so the table cannot even be created.
+             *
+             * Naming a default explicitly fixes both: the column keeps NOT
+             * NULL, the migration runs, and no column silently rewrites itself
+             * when the row is updated. That second half is the one that would
+             * have hurt: these columns are written once and read as evidence,
+             * and an implicit ON UPDATE would quietly turn "first" into "last".
+             *
+             * sqlite does not do any of this, so the test suite cannot catch
+             * it. See tests/Unit/MigrationTimestampTest.php, which reads these
+             * files as text for exactly that reason.
+             */
+            $table->timestamp('claimed_at')->useCurrent()->index();
             $table->timestamp('succeeded_at')->nullable();
 
             // Answers "what has this order already had written for it?"
