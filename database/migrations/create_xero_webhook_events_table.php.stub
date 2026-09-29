@@ -19,6 +19,25 @@ return new class extends Migration
 {
     public function up(): void
     {
+        /*
+         * Guarded, because a package migration is PUBLISHED and its filename
+         * carries the timestamp of the moment it was published -- not a fixed
+         * one the way an application's own migration does.
+         *
+         * So two environments that publish at different moments end up with two
+         * different filenames for the same table. Commit one of them, deploy to
+         * a server that already published its own, and Laravel sees a migration
+         * it has never run, tries to create a table that is already there, and
+         * stops the whole deployment on 1050 "table already exists".
+         *
+         * Existing means done. The table is created once and never altered
+         * here, so there is nothing for a second run to catch up on, and a
+         * consumer who hits the duplicate can simply run migrate again.
+         */
+        if ($this->schema()->hasTable($this->table())) {
+            return;
+        }
+
         $this->schema()->create($this->table(), function (Blueprint $table) {
             $table->id();
 

@@ -10,7 +10,29 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.4.3] - 2026-09-29
+
+### Fixed
+
+- **`php artisan migrate` could stop a deployment with `1050 Table ... already exists`.** Run
+  `php artisan migrate` again and it now completes; nothing else is needed.
+
+  A package migration is *published*, and its filename carries the timestamp of the moment somebody
+  published it — not a fixed one the way an application's own migration does. Two environments that
+  publish at different moments therefore end up with two different filenames for the same table.
+  Commit one of them, deploy to a server that had already published its own, and Laravel sees a
+  migration it has never run, tries to create a table that is already there, and stops — halfway
+  through, with some tables created and some not.
+
+  Every migration this package ships now returns early when its table exists. These tables are
+  created once and never altered by these files, so there is nothing a second run needs to catch up
+  on, and an existing table is treated as work already done rather than as a conflict.
+
+  `tests/Unit/MigrationRerunTest.php` runs every migration a second time and fails without the guard,
+  reproducing the exact error.
+
 ### Changed
+
 
 - **The Laravel 11 end-of-life notice in the README is now four sentences and a link**, rather than a
   page restating Laravel's release policy.
@@ -517,7 +539,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.2...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.3...HEAD
+[1.4.3]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.3.0...v1.4.0
