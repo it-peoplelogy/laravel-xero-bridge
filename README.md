@@ -330,9 +330,11 @@ XERO_HTTP_TIMEOUT=30
 XERO_HTTP_RETRIES=3
 
 # --- Test console -----------------------------------------------------------
-# On everywhere except production. Set true to allow it on a production host,
-# false to remove it entirely. The default middleware, web,auth, means ANY
-# authenticated user -- narrow it to your own admin gate.
+# Unset means on everywhere except production. true allows it on a production
+# host; false removes it entirely.
+XERO_CONSOLE_ENABLED=
+# The default, web,auth, means ANY authenticated user -- narrow it to your own
+# admin gate, e.g. "web,auth,can:manage-xero" or "web,auth,role:admin".
 XERO_CONSOLE_MIDDLEWARE="web,auth"
 # Exact organisation names the console may WRITE into, comma separated. A Xero
 # Demo Company is always writable; anything else is somebody's real ledger.
@@ -417,8 +419,11 @@ The default middleware is `web,auth`, which means **any authenticated user**. Na
 admin gate:
 
 ```bash
-XERO_CONSOLE_MIDDLEWARE="web,auth,can:manage-xero"
+XERO_CONSOLE_MIDDLEWARE="web,auth,can:manage-xero"     # a Gate ability
+XERO_CONSOLE_MIDDLEWARE="web,auth,role:admin"          # spatie/laravel-permission
 ```
+
+Whatever gate the console replaced in your own application, keep it at least as narrow.
 
 Keep something that starts a **session** in that list. The page posts a CSRF token, and without a session
 there is no CSRF protection on an endpoint that can create invoices.
