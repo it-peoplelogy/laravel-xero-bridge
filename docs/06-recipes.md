@@ -21,8 +21,9 @@ placeholder.
 | [3. Payment time: buyer details, CC list, and emailing the invoice](#3-payment-time-buyer-details-cc-list-and-emailing-the-invoice) | `CompanyNumber`, `TaxNumber`, `IncludeInEmails` |
 | [4. Incremental sync of invoices](#4-incremental-sync-of-invoices) | `modifiedSince()` and `all()` |
 | [5. Reconciling a payment against an invoice](#5-reconciling-a-payment-against-an-invoice) | Applying, checking, and reversing |
-| [6. Testing a consuming application](#6-testing-a-consuming-application) | `Http::fake()` and `Http::preventStrayRequests()` |
+| [6. Testing a consuming application](#6-testing-a-consuming-application) | The package's one testing page: `Http::fake()`, `Http::preventStrayRequests()`, the connection row, mocking the facade |
 | [7. Which Xero APIs you can reach](#7-which-xero-apis-you-can-reach) | Wrapped, reachable, and scope-gated |
+| [8. Connecting from an SPA or API-only app](#8-connecting-from-an-spa-or-api-only-app) | Why the connect flow needs a session, and the settings that keep it |
 
 ---
 
@@ -281,6 +282,8 @@ Then the invoice. Note the two keys you did not write — the connection default
 > nobody notices for weeks. The package throws `UnsafeContactPayloadException` rather
 > than let it happen. If you genuinely mean to update the contact while writing an
 > invoice, say so: `XeroBridge::invoices()->withContactMutation()->create($payload)`.
+> Chain it like that: it returns a copy of the resource, so on a line of its own it
+> does nothing.
 
 - **`Type` is never defaulted.** Omit it and you get `InvalidInvoicePayloadException`.
   `ACCREC` is a sale, `ACCPAY` is a bill; guessing wrong is a wrong-direction ledger
@@ -509,7 +512,17 @@ actually accepted — successes and warnings, never failures.
   `summarizeErrors=false`, so Xero answers `200` even when some rows failed. Read the
   `BatchResult`: `successful()`, `warned()`, `failed()`, `errorMessages()`,
   `submittedAt($index)` for "row 3 failed because…", or `throwIfAnyFailed()` if you want
-  it to be an exception after all.
+  it to be an exception after all. It is also outside the write ledger below: only
+  `create()` takes a claim, so `for($order)->createMany()` is sent unprotected and logs a
+  warning saying so.
+- **The write ledger is the packaged form of steps 1 and 4.** With
+  `XERO_WRITES_LEDGER=true` and its table migrated,
+  `XeroBridge::invoices()->for($order)->create(...)` records a claim before the request
+  leaves and refuses a second invoice for the same order with
+  `XeroWriteAlreadyClaimedException`. A lost response leaves the claim pending, and a
+  pending claim blocks every later attempt — it never re-sends — until someone has checked
+  Xero and resolved the row by hand. The catch recipe is in
+  [Persistence](09-persistence.md#write-dedupe).
 
 ---
 
@@ -1103,10 +1116,10 @@ Xero flipped the invoice to `PAID` itself. You do not transition it.
   recipe above does) or add it to your `config/xero-bridge.php` under
   `connections.default`. Without either you get an `InvalidArgumentException` naming
   `settings()->paymentAccounts()` as the way to find a valid one.
-  > `XeroBridge::withDefaults(['payment_account_code' => '090'])` also works, but only if
-  > nothing has already resolved `payments()` for that connection earlier in the same
-  > process — resources are memoised per connection key, so a later `withDefaults()` is
-  > silently ignored. Passing the argument is reliable; this is not.
+  `XeroBridge::withDefaults(['payment_account_code' => '090'])->payments()` also works,
+  and applies to that expression only: it is honoured even when `payments()` was already
+  resolved for that connection, and it never reaches a later plain `payments()` call
+  (`tests/Unit/WithDefaultsTest.php`).
 - **Dates: Xero takes `YYYY-MM-DD` on write and returns `/Date(…)/` on read.** The
   package converts `Date` for you on a payment, so a payment read back and re-posted does
   not fail with a message that never mentions dates. It does not do this for invoices.
@@ -1129,9 +1142,42 @@ Xero flipped the invoice to `PAID` itself. You do not transition it.
 
 ## 6. Testing a consuming application
 
-Your suite must never reach `api.xero.com`. Two calls on the `Http` facade do the work:
-`Http::preventStrayRequests()` turns any unstubbed request into a thrown exception, and
-`Http::fake()` supplies the answers.
+This is the one place the package's testing advice is kept in full; webhook tests have
+their own section, linked [below](#webhooks).
+
+Your suite must never reach `api.xero.com`. The package talks to Xero only through
+Laravel's HTTP client, so the tools are Laravel's own: `Http::preventStrayRequests()`
+turns any request you did not fake into a thrown exception, and `Http::fake()` supplies
+the answers.
+
+### What every test needs
+
+1. **`Http::preventStrayRequests()`**, in your base `TestCase`. An unfaked request then
+   throws — "Attempted request to [...] without a matching fake." — instead of quietly
+   reaching Xero from CI.
+2. **A connection row with a future `expires_at`.** Every call reads its access token
+   from the connections table first — the table your published migration creates, so
+   `RefreshDatabase` builds it like any other. With no row for the key it throws
+   `XeroConnectionNotFoundException`. With a row whose `expires_at` is empty, past, or
+   within `XERO_REFRESH_LEEWAY` (60 seconds), the package refreshes the token first — a
+   `POST` to `identity.xero.com/connect/token` that your fakes do not cover. A test that
+   travels in time has to keep `expires_at` ahead of where it lands.
+3. **Fake patterns that include the API path and end in `*`.** The base URL is
+   `https://api.xero.com/api.xro/2.0/`, so `'api.xero.com/Invoices*'` matches nothing.
+   And Laravel matches a pattern against the whole URL, query string included:
+   `'api.xero.com/api.xro/2.0/Invoices'` without the `*` matches `create()` and an
+   unfiltered `list()`, but not `find()`, a filtered `list()`, `all()` or `createMany()`,
+   which adds `?summarizeErrors=false`. A bare `'api.xero.com/*'` is fine as a
+   catch-all.
+4. **An `APP_KEY`.** `access_token` and `refresh_token` use the `encrypted` cast and
+   cannot be written without one. `phpunit.xml` is the place for it, so CI has one too.
+5. **The defaults your assertions rely on.** `account_code` has no shipped default, so a
+   test that asserts on `AccountCode` sets `XERO_ACCOUNT_CODE` in `phpunit.xml`, or
+   `config(['xero-bridge.connections.default.account_code' => '200'])` before the first
+   call — a plain `XeroBridge::invoices()` reads the defaults once, when it is first
+   built.
+
+### A complete test class
 
 ```php
 <?php
@@ -1160,10 +1206,16 @@ class CustomerInvoicerTest extends TestCase
         // reaching Xero. Put this in your base TestCase.
         Http::preventStrayRequests();
 
+        // No shipped default; the AccountCode assertion below depends on it.
+        config(['xero-bridge.connections.default.account_code' => '200']);
+
         $this->connectedToXero();
     }
 
-    /** A healthy connection row. Nothing here is a real credential. */
+    /**
+     * A healthy connection row: its expires_at is in the future, so no token
+     * refresh is attempted. Nothing here is a real credential.
+     */
     private function connectedToXero(): XeroConnection
     {
         return XeroConnection::create([
@@ -1292,15 +1344,54 @@ Http::assertSent(fn (Request $r) => str_ends_with($r->url(), 'Invoices/inv-1/Ema
     && in_array($r->body(), ['', '[]', '{}'], true));
 ```
 
+### Mocking the facade instead
+
+`XeroBridgeManager` and the four resource classes — `Invoices`, `Contacts`, `Payments` and
+`Settings` — are not `final`, so Laravel's facade mocking and plain Mockery mocks work
+today, with no connection row and no HTTP fakes:
+
+```php
+use Peoplelogy\XeroBridge\Facades\XeroBridge;
+use Peoplelogy\XeroBridge\Resources\Invoices;
+
+$invoices = Mockery::mock(Invoices::class);
+$invoices->shouldReceive('create')->once()->andReturn([
+    'InvoiceID' => 'ed255415-e141-4150-aab7-89c3bbbb851c',
+    'InvoiceNumber' => 'INV-0042',
+]);
+
+XeroBridge::shouldReceive('invoices')->andReturn($invoices);
+```
+
+That is the right tool for testing *your* code's branching, and the wrong one for testing
+what reaches Xero:
+
+- **It bypasses the package entirely.** The guards (`Type`, the `Contact` block,
+  `LineItemID`), the connection defaults, the write ledger and `InvoiceCreated` never run,
+  so a payload the package would refuse passes, and nothing tells you what would have been
+  sent. When the assertion is about the payload, fake HTTP instead.
+- **The mock stands in for the whole manager.** Every facade method the code under test
+  calls needs an expectation, or Mockery throws `BadMethodCallException`:
+  `XeroBridge::connection('acme')->invoices()` also needs
+  `XeroBridge::shouldReceive('connection')->with('acme')->andReturnSelf()`. Resource
+  methods that return a copy — `for()`, `withContactMutation()`, `replacingLineItems()` —
+  need `->andReturnSelf()` on the resource mock.
+- **Only those classes.** The HTTP client and the token manager are `final`; reach them
+  through `Http::fake()`, not a mock.
+
+### Webhooks
+
+Testing the webhook endpoint and its listeners — posting raw signed bytes, then running
+`ProcessXeroWebhook` directly — is covered in
+[Webhooks and events](04-webhooks-and-events.md#testing-webhooks). One thing to know when
+you post: under `Queue::fake()` the job never runs, so its uniqueness lock is never
+released within that test, and posting the same events twice queues **one** job, not two
+(`tests/Feature/WebhookUniqueLockTest.php`). Different events still queue separately.
+
 ### Notes and gotchas
 
 - **The first declared pattern that matches wins.** Declare `Invoices/inv-1/Email` before
   `Invoices/*`, or the wildcard swallows it and your `204` stub is never used.
-- **Patterns must include the API path.** The package's base URL is
-  `https://api.xero.com/api.xro/2.0/`, so `'api.xero.com/Invoices*'` matches nothing. A
-  bare `'api.xero.com/*'` is fine as a catch-all.
-- **Set `APP_KEY` in `phpunit.xml`.** `access_token` and `refresh_token` use the
-  `encrypted` cast and cannot be written without one.
 - **Remember the preflight reads.** `authorise()`, `void()` and `delete()` each `GET` the
   invoice first, so a test that only stubs the `POST` fails on the read. Pass `false` as
   `void()`'s and `delete()`'s second argument to skip it.
@@ -1314,6 +1405,12 @@ Http::assertSent(fn (Request $r) => str_ends_with($r->url(), 'Invoices/inv-1/Ema
   `$r->url()`, `$r->method()` and `$r->data()`.
 - **`Http::assertSentCount()` is worth using.** It is how you prove `firstOrCreate()` did
   not write when the contact already existed.
+- **With the write ledger on, expect a transaction warning.** `RefreshDatabase` runs each
+  test inside a transaction on your default connection, so with `XERO_WRITES_LEDGER=true`
+  every write the ledger claims there logs "xero-bridge: a Xero write is inside a database
+  transaction…" at warning level. In a test that is expected: the claim still works within
+  the test, and the package only ever warns about a transaction — in strict mode too —
+  never refuses. Outside a test, the warning means what it says.
 
 ---
 
@@ -1328,7 +1425,7 @@ Four resources, with guards, defaults and typed errors:
 | `XeroBridge::invoices()` | `Invoices`, plus `/Email`, `/OnlineInvoice`, PDF | `accounting.invoices` |
 | `XeroBridge::contacts()` | `Contacts` | `accounting.contacts` |
 | `XeroBridge::payments()` | `Payments` | `accounting.payments` |
-| `XeroBridge::settings()` | `Accounts`, `TaxRates`, `Organisation`, `BrandingThemes` | `accounting.settings` |
+| `XeroBridge::settings()` | `Accounts`, `TaxRates`, `Organisation`, `BrandingThemes` | `accounting.settings`, or `accounting.settings.read` — every call is a read |
 
 ### Everything else in the Accounting API
 
@@ -1387,6 +1484,22 @@ openid profile email offline_access accounting.invoices accounting.payments
 accounting.contacts accounting.settings accounting.attachments
 ```
 
+That default is broad — broader than the four wrapped resources use. `openid profile
+email` serve nothing in this package: Xero answers them with an `id_token`, which the
+package discards on receipt, never storing or exposing it. `accounting.attachments` has
+no wrapper; it matters only for Attachments endpoints you call yourself through
+`request()`. An application that raises, sends and looks up invoices, and finds or
+creates contacts, needs only:
+
+```
+XERO_SCOPES="offline_access accounting.invoices accounting.contacts accounting.settings.read"
+```
+
+Add `accounting.payments` to record payments (`payments()`, `createForInvoice()`). Keep a
+settings scope in any set: `settings()` reads the accounts and tax rates, and the test
+console's write guard reads the Organisation record. The shipped default is unchanged;
+[Getting started](01-getting-started.md#scopes) has the full scope table.
+
 Anything below needs a scope added to that list **and** a fresh authorisation:
 
 | Resource | Scope required |
@@ -1418,6 +1531,11 @@ correct one — before it ever reaches the refresh path.
 > through `XeroBridge::connectUrl()` again. Doing it in the other order means everybody
 > connects twice.
 >
+> Narrowing does not work by editing at all. `XERO_SCOPES` is only read when a
+> connection is authorised — a token refresh asks for no scopes — so removing one changes
+> nothing for an existing connection. The only way to drop a scope is to revoke that
+> authorisation and connect again.
+>
 > The granted scopes are stored per connection, so you can tell which connections predate
 > the change:
 >
@@ -1448,3 +1566,55 @@ deploy-first warning.
 Anything needing a different OAuth **grant type** rather than a different URL. The Xero
 App Store API and Custom Connections both use client credentials; this package implements
 the authorisation code flow with refresh tokens, by design.
+
+---
+
+## 8. Connecting from an SPA or API-only app
+
+Connecting an organisation is two full-page browser navigations, and both run on a
+**session**:
+
+1. Your application sends the browser to `/xero/connect` — the URL
+   `XeroBridge::connectUrl()` returns. The package mints a single-use state value, stores
+   it in the session, and redirects to Xero's sign-in page.
+2. Once the administrator has consented, Xero redirects the browser back to
+   `/xero/callback` with `?code=…&state=…`. The callback looks the state up in the
+   session, and refuses the attempt when it is not there.
+
+Neither navigation can carry a bearer token: a browser coming back from Xero brings only
+its cookies. So however your API authenticates, these two routes need the session cookie,
+and the session behind it, to survive the round trip. That binding is also what makes the
+state worth having: a state value presented from any other session is refused
+(`tests/Feature/CallbackRouteTest.php`, "rejects a valid state presented from another
+session").
+
+Three settings decide whether the session survives:
+
+| Setting | Needs to be | Why |
+|---|---|---|
+| `XERO_ROUTES_MIDDLEWARE` | something that starts a session: the default `web,auth`, or `web,auth:sanctum` | The `web` group's `StartSession` is what keeps the state between the two requests. |
+| `SESSION_DRIVER` | a persistent driver — `database` (Laravel's default), `file`, `redis`… anything but `array` | `array` forgets everything when the request ends, so the state `/xero/connect` stored is gone before Xero sends the browser back. |
+| `SESSION_SAME_SITE` | `lax`, Laravel's default | The return from Xero is a cross-site navigation. Under `lax` the browser sends the session cookie with it; under `strict` it withholds it, and the callback arrives in a fresh, empty session. |
+
+When the session is lost, the attempt fails after the administrator has already consented
+at Xero, with "The Xero authorisation could not be verified, because the link expired or
+your session changed. Please start again." — which sends people looking for an expiry
+problem that is not there. Behind `auth` it can surface even earlier: with the session
+gone nobody is signed in, so `auth` sends the administrator to your sign-in page, or fails
+outright if the application has no `login` route.
+
+**Sanctum's cookie-based SPA authentication works as it is**, because it signs users in
+through the session. Set `XERO_ROUTES_MIDDLEWARE="web,auth:sanctum"`, plus your own gate —
+`web,auth:sanctum,can:manage-xero`, say. Open `/xero/connect` as a page navigation, a link
+or `window.location`, never with `fetch` or axios: it answers with a redirect to Xero's
+sign-in page, which only works in the address bar.
+
+An application that authenticates **only** with bearer tokens has nothing the returning
+browser can present, so a guard that reads only the token sees a guest. These two routes
+need `web`, and an administrator signed in through that session.
+
+The outcome comes back through the session too. The callback flashes it before
+redirecting — `xero-bridge.status` on success, `xero-bridge.error` on failure, each also
+as `status` or `error` — so the page it lands on can show it. An SPA can instead ask your
+own API whether the connection now exists; `XeroBridge::connections()` lists every stored
+one.

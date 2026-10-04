@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Peoplelogy\XeroBridge\MyInvois\IdType;
 use Peoplelogy\XeroBridge\MyInvois\Models\MyInvoisValidation;
@@ -51,6 +52,17 @@ function fakeVerdict(int $status = 200, array $headers = []): void
 function auditClient(): MyInvoisClient
 {
     return app(MyInvoisClient::class);
+}
+
+/**
+ * Spy on the log the audit writes to. The audit and the client holding it are
+ * singletons that keep the logger they were built with, so both are rebuilt.
+ */
+function auditLogSpy(): void
+{
+    Log::spy();
+    app()->forgetInstance(MyInvoisAudit::class);
+    app()->forgetInstance(MyInvoisClient::class);
 }
 
 /*
@@ -250,6 +262,49 @@ it('records nothing, and still validates, when the table is absent', function ()
     fakeVerdict(200);
 
     expect(auditClient()->validate('C1', IdType::BRN, '2'))->toBeTrue();
+});
+
+/*
+|--------------------------------------------------------------------------
+| A lost verdict is reported; a race that was won is not
+|--------------------------------------------------------------------------
+*/
+
+it('reports a verdict it could not record rather than taking it for a race', function () {
+    auditLogSpy();
+    fakeVerdict(200);
+
+    // A required column arriving empty -- the same NOT NULL failure SQLite
+    // reports for a column a host added without a default. It shares
+    // SQLSTATE 23000 with a duplicate, which is how it used to vanish in
+    // silence.
+    MyInvoisValidation::creating(function (MyInvoisValidation $row): void {
+        $row->setAttribute('environment', null);
+    });
+
+    // Recording still never takes down the validation it records.
+    expect(auditClient()->validate('C1', IdType::BRN, '2'))->toBeTrue()
+        ->and(MyInvoisValidation::count())->toBe(0);
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message) => str_contains($message, 'could not record a MyInvois verdict'))
+        ->once();
+});
+
+it('stays quiet when another process recorded the same subject first', function () {
+    auditLogSpy();
+    fakeVerdict(200);
+
+    // The other process's row lands between this one's read and its insert,
+    // so the insert hits the unique subject_hash: the constraint did its job.
+    MyInvoisValidation::creating(function (MyInvoisValidation $row): void {
+        MyInvoisValidation::query()->insert($row->getAttributes());
+    });
+
+    expect(auditClient()->validate('C1', IdType::BRN, '2'))->toBeTrue()
+        ->and(MyInvoisValidation::count())->toBe(1);
+
+    Log::shouldNotHaveReceived('warning');
 });
 
 it('prunes verdicts nobody has re-checked', function () {

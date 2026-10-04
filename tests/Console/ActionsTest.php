@@ -2,8 +2,13 @@
 
 declare(strict_types=1);
 
+use Illuminate\Auth\GenericUser;
+use Illuminate\Foundation\Auth\User;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Testing\TestResponse;
 use Peoplelogy\XeroBridge\Models\XeroConnection;
 
@@ -457,6 +462,27 @@ it('reports a forced refresh against a key that is not connected', function () {
         ->assertJsonPath('error.type', 'XeroConnectionNotFoundException');
 });
 
+it('reports a token save that failed without its SQL, or the tokens it was saving', function () {
+    // Laravel writes the SQL into a QueryException's message with every
+    // binding filled in -- here the UPDATE carrying the ciphertext of the
+    // tokens Xero has just rotated. The console shows the driver's message.
+    fakeXero();
+    DB::unprepared(
+        'CREATE TRIGGER xero_token_save_fails BEFORE UPDATE ON xero_connections '
+        ."BEGIN SELECT RAISE(ABORT, 'disk full'); END;"
+    );
+
+    $response = run(['action' => 'tokens.refresh'])
+        ->assertOk()
+        ->assertJsonPath('ok', false)
+        ->assertJsonPath('error.type', 'QueryException');
+
+    expect($response->json('error.message'))->toContain('disk full')
+        ->not->toContain('SQL:')
+        // The start of every payload Laravel's encrypter writes.
+        ->and((string) $response->getContent())->not->toContain('eyJpdiI');
+});
+
 it('deletes the stored row on forget', function () {
     fakeXero();
 
@@ -477,4 +503,135 @@ it('says so when forgetting a key that is not stored', function () {
         ->assertJsonPath('data.deleted', false);
 
     expect(XeroConnection::count())->toBe(1);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Forget leaves a trace
+|--------------------------------------------------------------------------
+|
+| The only connection deletion a person triggers by hand. No Xero call is
+| made, so nothing else records it, and the connection_id needed to finish
+| the disconnect at Xero goes with the row.
+|
+*/
+
+it('logs who forgot a connection, and which one', function () {
+    fakeXero();
+    Log::spy();
+
+    $this->actingAs(new GenericUser(['id' => 9]));
+
+    run(['action' => 'connection.forget'])->assertOk()->assertJsonPath('data.deleted', true);
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message, array $context): bool => str_contains($message, 'deleted a stored Xero connection')
+            && $context === [
+                'connection' => 'default',
+                'tenant_id' => 'tenant-1',
+                'connection_id' => 'conn-1',
+                'actor_id' => 9,
+                'actor_type' => GenericUser::class,
+                'actor_guard' => 'web',
+            ])
+        ->once();
+});
+
+it('logs a forget with no actor when nobody is signed in', function () {
+    // The suite's console middleware is `web` alone, which is what a host
+    // that drops `auth` gets.
+    fakeXero();
+    Log::spy();
+
+    run(['action' => 'connection.forget'])->assertOk()->assertJsonPath('data.deleted', true);
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message, array $context): bool => ($context['connection'] ?? null) === 'default'
+            && $context['actor_id'] === null
+            && $context['actor_type'] === null
+            && $context['actor_guard'] === null)
+        ->once();
+});
+
+it('never puts the user model, its password hash or the tokens in the log', function () {
+    fakeXero();
+    Log::spy();
+
+    $this->actingAs((new User)->forceFill([
+        'id' => 7,
+        'password' => 'password-hash-sentinel',
+        'remember_token' => 'remember-token-sentinel',
+    ]));
+
+    run(['action' => 'connection.forget'])->assertOk()->assertJsonPath('data.deleted', true);
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(function (string $message, array $context): bool {
+            foreach ($context as $value) {
+                if (! is_scalar($value) && $value !== null) {
+                    return false;
+                }
+            }
+
+            $logged = $message.json_encode($context);
+
+            return $context['actor_id'] === 7
+                && $context['actor_type'] === User::class
+                && ! str_contains($logged, 'password-hash-sentinel')
+                && ! str_contains($logged, 'remember-token-sentinel')
+                && ! str_contains($logged, 'access-token-1')
+                && ! str_contains($logged, 'refresh-token-1');
+        })
+        ->once();
+});
+
+it('still deletes and logs when the signed-in user cannot be resolved', function () {
+    fakeXero();
+    Log::spy();
+
+    // A guard whose user lookup throws: a user provider whose database is down.
+    Auth::viaRequest('xero-bridge-console-broken', fn () => throw new RuntimeException('user provider is down'));
+    config()->set('auth.guards.console-broken', ['driver' => 'xero-bridge-console-broken']);
+    Auth::shouldUse('console-broken');
+
+    run(['action' => 'connection.forget'])
+        ->assertOk()
+        ->assertJsonPath('ok', true)
+        ->assertJsonPath('data.deleted', true);
+
+    expect(XeroConnection::count())->toBe(0);
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message, array $context): bool => ($context['connection'] ?? null) === 'default'
+            && $context['actor_id'] === null)
+        ->once();
+});
+
+it('logs nothing when there was nothing to forget', function () {
+    fakeXero();
+    Log::spy();
+
+    run(['action' => 'connection.forget', 'connection' => 'nothing-here'])
+        ->assertOk()
+        ->assertJsonPath('data.deleted', false);
+
+    Log::shouldNotHaveReceived('warning');
+});
+
+it('reports, and does not log, a forget a model listener vetoed', function () {
+    // A host can guard the row itself with a `deleting` listener that returns
+    // false. Then nothing was deleted, and the console must not say it was.
+    fakeXero();
+    Log::spy();
+
+    XeroConnection::deleting(fn () => false);
+
+    run(['action' => 'connection.forget'])
+        ->assertOk()
+        ->assertJsonPath('ok', true)
+        ->assertJsonPath('data.deleted', false);
+
+    expect(XeroConnection::count())->toBe(1);
+
+    Log::shouldNotHaveReceived('warning');
 });

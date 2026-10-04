@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Peoplelogy\XeroBridge\MyInvois;
 
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Peoplelogy\XeroBridge\MyInvois\Models\MyInvoisValidation;
 use Peoplelogy\XeroBridge\Support\Clock;
@@ -107,12 +107,14 @@ final class MyInvoisAudit
                 'last_checked_at' => $now,
                 'check_count' => 1,
             ]);
-        } catch (QueryException $e) {
+        } catch (UniqueConstraintViolationException) {
             // Another process recorded the same subject between the read and
             // the insert. The constraint did its job; nothing to repair.
-            if (! $this->isUniqueViolation($e)) {
-                $this->warn($e);
-            }
+            //
+            // The framework's own classification, not "SQLSTATE 23000": that
+            // code also covers NOT NULL, foreign key and CHECK failures, and a
+            // verdict lost to one of those must be reported, not taken for a
+            // race that was won.
         } catch (Throwable $e) {
             // Recording must never take down the validation it was recording.
             $this->warn($e);
@@ -199,13 +201,6 @@ final class MyInvoisAudit
         $tin = trim($tin);
 
         return $tin === '' ? null : substr($tin, -4);
-    }
-
-    private function isUniqueViolation(QueryException $e): bool
-    {
-        $state = (string) ($e->errorInfo[0] ?? $e->getCode());
-
-        return $state === '23000' || $state === '23505';
     }
 
     private function warn(Throwable $e): void

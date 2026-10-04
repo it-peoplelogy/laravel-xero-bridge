@@ -32,7 +32,18 @@ class TestCase extends Orchestra
     {
         Carbon::setTestNow();
 
-        parent::tearDown();
+        try {
+            parent::tearDown();
+        } finally {
+            // symfony/console before 7.3.4, which the prefer-lowest CI legs
+            // install, writes each run's verbosity to SHELL_VERBOSITY in the
+            // environment, never puts it back, and starts the next run from
+            // it: after one Artisan call with -v, every later one in the
+            // process runs verbose. Cleared after every test, so no test's
+            // flags can change what another test's command prints.
+            putenv('SHELL_VERBOSITY');
+            unset($_ENV['SHELL_VERBOSITY'], $_SERVER['SHELL_VERBOSITY']);
+        }
     }
 
     protected function getPackageProviders($app): array
@@ -48,8 +59,8 @@ class TestCase extends Orchestra
         $app['config']->set('database.connections.testing', [
             'driver' => 'sqlite',
             'database' => ':memory:',
-            // Explicitly empty. pips applies a connection-level 'pips_' prefix,
-            // so pinning '' here proves no query in the package assumes one.
+            // Explicitly empty. Host applications often apply a connection-level
+            // prefix, so pinning '' here proves no query in the package assumes one.
             'prefix' => '',
         ]);
 

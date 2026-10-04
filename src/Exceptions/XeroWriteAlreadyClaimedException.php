@@ -27,6 +27,14 @@ namespace Peoplelogy\XeroBridge\Exceptions;
  *   outcome. xeroId() is null. Nothing may re-send: the safe move is to leave
  *   it and let a human look, which is why this state blocks at any age rather
  *   than expiring.
+ *
+ * connectionKey() names the connection the write was for, and the
+ * XeroWriteBlocked event is dispatched just before this is thrown -- with the
+ * owner and, for a pending block, when the claim was taken -- so one listener
+ * can tell a stuck claim (page on it) from two workers racing (nothing to do).
+ *
+ * Not to be confused with XeroWriteLedgerUnavailableException, which means the
+ * ledger could NOT answer, nothing was sent, and retrying IS safe.
  */
 class XeroWriteAlreadyClaimedException extends XeroBridgeException
 {

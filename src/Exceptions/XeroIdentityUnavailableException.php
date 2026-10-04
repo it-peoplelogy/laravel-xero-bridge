@@ -10,10 +10,9 @@ namespace Peoplelogy\XeroBridge\Exceptions;
  * valid; the caller should simply try again later.
  *
  * Keeping this distinct from XeroReauthorizationRequiredException is the whole
- * point. Conflating the two is the live bug in the host project:
- * pips/app/Services/XeroService.php truncates its token table on ANY failed
- * refresh, so a single transient 502 permanently destroys the connection and
- * requires someone to reconnect through a browser.
+ * point. Conflating the two is a common integration bug: an integration that
+ * deletes its stored tokens on ANY failed refresh turns a single transient 502
+ * into a connection only someone with a browser can restore.
  */
 class XeroIdentityUnavailableException extends XeroBridgeException
 {

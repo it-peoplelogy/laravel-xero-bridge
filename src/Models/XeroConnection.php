@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Peoplelogy\XeroBridge\Models;
 
 use Carbon\CarbonImmutable;
+use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Peoplelogy\XeroBridge\Support\Clock;
@@ -18,10 +19,14 @@ use Peoplelogy\XeroBridge\Support\Scopes;
  * `access_token` and `refresh_token` use the `encrypted` cast, which protects
  * them at rest. It does NOT protect them once the model is hydrated: an
  * activity log, toArray(), a JSON response or Log::info($model) all emit the
- * DECRYPTED value. That is a live credential leak in the host project today
- * (pips/app/Models/Entities/XeroToken.php logs both tokens in clear into an
- * activity log retained for 365 days). $hidden below closes the serialisation
- * half of that hole, and there is a test asserting it stays closed.
+ * DECRYPTED value. An activity-log trait (LogsActivity with logAll(), say)
+ * would therefore write both tokens in clear into its log table, for as long
+ * as that table is kept. $hidden below keeps both tokens out of toArray() and
+ * JSON, and there is a test asserting it stays that way. It does NOT reach PHP
+ * serialisation: a queued listener for an event carrying this model writes the
+ * whole model, token ciphertext included, into the job payload (and into
+ * failed_jobs). Queue such listeners with ShouldBeEncrypted, or copy the
+ * scalars you need in a synchronous listener.
  *
  * @property string $key
  * @property string $tenant_id
@@ -118,9 +123,30 @@ class XeroConnection extends Model
         return $this->invalidated_at !== null;
     }
 
+    /**
+     * Not invalidated, and holding a refresh token this application can read.
+     *
+     * An unreadable token counts as unusable rather than as an error. After an
+     * APP_KEY rotation without APP_PREVIOUS_KEYS the encrypted cast throws a
+     * DecryptException, and this is the guard listeners and xero-bridge:status
+     * use to decide whether to touch a connection at all -- so it has to
+     * answer, not throw. Actually using the token still fails loudly:
+     * TokenManager::readToken() turns the same failure into
+     * XeroConfigurationException::unreadableTokens(), which says what to do.
+     */
     public function isUsable(): bool
     {
-        return ! $this->isInvalidated() && $this->refresh_token !== '';
+        if ($this->isInvalidated()) {
+            return false;
+        }
+
+        try {
+            // getAttribute() rather than ->refresh_token: the decryption runs
+            // in the cast, behind this call, and that is what can throw.
+            return $this->getAttribute('refresh_token') !== '';
+        } catch (DecryptException) {
+            return false;
+        }
     }
 
     /** tenant_name is nullable in Xero's API, so never interpolate it raw. */

@@ -85,7 +85,9 @@ final class XeroHttpClient
     }
 
     /**
-     * The raw response, for PDFs and anything else that is not JSON.
+     * The undecoded response. Accept stays application/json unless the
+     * dedicated $accept argument says otherwise -- which is how invoices()->pdf()
+     * asks for a PDF.
      */
     public function send(
         string $method,

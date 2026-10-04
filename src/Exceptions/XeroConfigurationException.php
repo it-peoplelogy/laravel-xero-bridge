@@ -66,12 +66,17 @@ class XeroConfigurationException extends XeroBridgeException
      * APP_KEY rotation makes every stored token undecryptable. Without this,
      * the caller sees a bare DecryptException from deep inside Eloquent with
      * nothing linking it to Xero.
+     *
+     * Both ways out, cheaper first and in xero-bridge:status's own words: the
+     * old key in APP_PREVIOUS_KEYS makes the stored tokens readable again for
+     * every organisation at once, where re-authorising is one visit each.
      */
     public static function unreadableTokens(string $key, string $connectUrl): self
     {
         return (new self(
             "The stored Xero tokens for connection [{$key}] cannot be decrypted. This normally "
-            ."means APP_KEY changed since they were saved. Re-authorise at {$connectUrl}."
+            .'means APP_KEY changed since they were saved. Put the old key in APP_PREVIOUS_KEYS, '
+            ."or re-authorise at {$connectUrl}."
         ))->withConnectionKey($key);
     }
 

@@ -27,8 +27,8 @@ use Throwable;
  *   app config -> XeroConfigurationException            (fix .env)
  *
  * Getting this wrong in the obvious direction -- treating any failure as
- * terminal -- is the live bug in the host project, where one transient 502
- * wipes the refresh token permanently.
+ * terminal -- is the common integration bug, where one transient 502 wipes the
+ * refresh token permanently and only a person with a browser can recover it.
  */
 final class IdentityClient
 {

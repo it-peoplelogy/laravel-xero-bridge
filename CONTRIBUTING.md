@@ -39,6 +39,16 @@ None of this is discoverable from a green run on a PHP 8.4 laptop, which is why 
 - **Coverage is CI-only.** With no Xdebug or PCOV installed, `composer test-coverage` reports no
   coverage driver.
 - `phpunit.xml.dist` sets `memory_limit=512M`, which a booted Testbench app needs.
+- **Delete what an older install test left behind, once.** `xero-bridge:install` really publishes, and
+  under Testbench that means into the shared skeleton in `vendor/`. Older runs of its test left
+  `vendor/orchestra/testbench-core/laravel/config/xero-bridge.php` and `*_create_xero_*_table.php`
+  migrations there, and every later boot loads that stale config in place of the shipped one — locally
+  only, since CI starts from a fresh `vendor/`. The tests now clean up after themselves, so this is a
+  one-off:
+  ```bash
+  rm -f vendor/orchestra/testbench-core/laravel/config/xero-bridge.php
+  find vendor/orchestra/testbench-core/laravel/database/migrations -name '*_create_xero_*_table.php' -delete
+  ```
 
 ## Test suite rules
 
@@ -49,7 +59,7 @@ None of this is discoverable from a green run on a PHP 8.4 laptop, which is why 
   (`Carbon::setTestNow()`), because `block()` measures its timeout with `Carbon::now()` and under a
   frozen clock it loops forever instead of timing out.
 - The database is in-memory SQLite with an explicitly empty prefix, which proves no query in the
-  package assumes one — PIPS applies `pips_` at the connection level.
+  package assumes one; host applications commonly apply one at the connection level.
 - `APP_KEY` is random per boot, so no fixed value can be mistaken for a real credential. Assert that a
   token round-trips, never on its ciphertext.
 
@@ -60,6 +70,10 @@ None of this is discoverable from a green run on a PHP 8.4 laptop, which is why 
 > Point it only ever at a Xero **Demo Company**, never a client's live organisation. Real credentials
 > go in `workbench/.env`, which is gitignored. `testbench.yaml` is committed and must stay free of
 > secrets.
+
+The workbench has the test console on because `testbench.yaml` sets `XERO_CONSOLE_ENABLED=true`.
+Nothing else switches it on — not even `APP_ENV` — so an application that installs the package has no
+console until it sets that itself.
 
 Exercising the **MyInvois** panel by hand needs `MYINVOIS_ENABLED=true` plus a sandbox client id and
 secret in that same gitignored file. Use `MYINVOIS_ENVIRONMENT=sandbox` and the preprod host — LHDN

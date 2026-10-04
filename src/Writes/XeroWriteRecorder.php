@@ -6,9 +6,12 @@ namespace Peoplelogy\XeroBridge\Writes;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Peoplelogy\XeroBridge\Events\XeroWriteBlocked;
 use Peoplelogy\XeroBridge\Exceptions\XeroWriteAlreadyClaimedException;
+use Peoplelogy\XeroBridge\Exceptions\XeroWriteLedgerUnavailableException;
 use Peoplelogy\XeroBridge\Models\XeroWriteRecord;
 use Peoplelogy\XeroBridge\Support\Clock;
 use Peoplelogy\XeroBridge\Support\TableGuard;
@@ -41,6 +44,14 @@ use Throwable;
  * is free for a corrected retry. A timeout, a 5xx, a 429 or a killed worker
  * all leave it pending, because none of them proves nothing was created.
  *
+ * WHEN THE LEDGER ITSELF FAILS -- its table is missing, the database is
+ * unreachable, an insert fails for any reason other than a duplicate -- the
+ * default is to say so loudly and send the write unprotected, because
+ * recording must never take down the write it records. With writes.strict on,
+ * a write that names an owner is refused instead, before anything is sent
+ * (XeroWriteLedgerUnavailableException). Only owned writes: an unowned one is
+ * never deduplicated, so refusing it would add an outage and no protection.
+ *
  * DO NOT WRAP A XERO WRITE IN A DATABASE TRANSACTION. If you do, the claim is
  * invisible to other workers until you commit, and rolling back after Xero
  * accepted the invoice erases the only record that it exists. The claim must
@@ -62,6 +73,9 @@ final class XeroWriteRecorder
      *
      * @throws XeroWriteAlreadyClaimedException when this write already happened
      *                                          or is in flight
+     * @throws XeroWriteLedgerUnavailableException in strict mode, when the claim
+     *                                             for an owned write cannot be
+     *                                             recorded; nothing was sent
      */
     public function claim(
         string $connectionKey,
@@ -70,7 +84,26 @@ final class XeroWriteRecorder
         ?string $reference = null,
         ?string $idempotencyKey = null,
     ): WriteClaim {
-        if (! $this->usable()) {
+        if (! $this->enabled()) {
+            return WriteClaim::none($operation);
+        }
+
+        $this->warnIfInsideTransaction();
+
+        // Strict mode only ever refuses a write the ledger could have
+        // protected, which means one that names an owner. Read with the
+        // shipped default, so a config published or cached before the key
+        // existed keeps today's behaviour.
+        $strict = $owner !== null && (bool) $this->config->get('writes.strict', false);
+
+        // Strict mode does not ask the TableGuard, and lets the insert decide.
+        // The guard remembers a no-table answer for the life of the process,
+        // and a failed check for a minute: through it, a table migrated under
+        // a running worker would go on refusing every owned write until the
+        // worker restarts, and one failed check would refuse them all for a
+        // minute after the database came back. A missing table fails the
+        // insert like any other storage failure, and is refused as one.
+        if (! $strict && ! $this->tablePresent()) {
             return WriteClaim::none($operation);
         }
 
@@ -93,32 +126,39 @@ final class XeroWriteRecorder
             ]);
 
             return new WriteClaim($record->id, $operation, $claimKey);
-        } catch (QueryException $e) {
-            if (! $this->isUniqueViolation($e)) {
-                // A real storage failure. Recording must never take down the
-                // write itself, so carry on unprotected and say so loudly.
-                $this->logger->error(
-                    'xero-bridge: could not claim a write, proceeding WITHOUT duplicate protection.',
-                    ['operation' => $operation, 'exception' => $e->getMessage()],
-                );
-
-                return WriteClaim::none($operation);
+        } catch (UniqueConstraintViolationException) {
+            // Somebody got there first. Which somebody decides what happens.
+            //
+            // The framework's own classification, not "SQLSTATE 23000": that
+            // code also covers NOT NULL, foreign key and CHECK failures, which
+            // used to surface here as a "pending" duplicate -- and the
+            // documented catch recipe drops a pending block without a word.
+            throw $this->collision(
+                $connectionKey, $operation, $ownerType, $ownerId, $reference, $this->findClaim($claimKey),
+            );
+        } catch (Throwable $e) {
+            // Not a duplicate. But an integrity failure of another kind --
+            // NOT NULL, a foreign key, CHECK -- can be raised before the
+            // unique index is ever consulted (SQLite checks NOT NULL first),
+            // so it says nothing about whether this record's claim is already
+            // held. If it is, refuse the write as the duplicate it would be;
+            // carrying on would send it again.
+            if ($owner !== null && $this->isIntegrityFailure($e)
+                && ($held = $this->findClaim($claimKey)) !== null) {
+                throw $this->collision($connectionKey, $operation, $ownerType, $ownerId, $reference, $held);
             }
 
-            // Somebody got there first. Which somebody decides what happens.
-            throw $this->describeCollision($claimKey, $operation, $ownerType, $ownerId);
-        } catch (Throwable $e) {
-            $this->logger->error(
-                'xero-bridge: could not claim a write, proceeding WITHOUT duplicate protection.',
-                ['operation' => $operation, 'exception' => $e->getMessage()],
-            );
-
-            return WriteClaim::none($operation);
+            return $this->unrecorded($connectionKey, $operation, $this->ownerLabel($ownerType, $ownerId), $strict, $e);
         }
     }
 
     /**
      * Xero accepted the write. Record what it produced.
+     *
+     * Never throws, in strict mode too. By now the write EXISTS in Xero, so
+     * throwing would report a created invoice as a failure, and the caller's
+     * retry would be refused by the claim this failed to update anyway. The
+     * pending row left behind is already the safe state.
      *
      * @param  array<string, mixed>  $resource  Xero's response body
      */
@@ -154,6 +194,10 @@ final class XeroWriteRecorder
      * ONLY call this where non-creation is PROVEN -- a 400 rejecting the
      * request. A timeout or a 5xx proves nothing and must leave the claim
      * standing, because the write may well have landed.
+     *
+     * Never throws, in strict mode too: the caller is already handling Xero's
+     * rejection, and a release that fails leaves the row pending, which blocks
+     * -- the safe direction.
      */
     public function releaseProvenFailure(WriteClaim $claim): void
     {
@@ -175,6 +219,11 @@ final class XeroWriteRecorder
      * The Xero id already written for this owner, if any.
      *
      * The read side of the ledger: "has this order been invoiced yet?"
+     *
+     * Never throws, in strict mode too. It is a read: an unreadable ledger
+     * answers "not known" with null, and strict mode does its work on the
+     * write that usually follows, which is refused if the claim cannot be
+     * recorded.
      */
     public function existingId(string $connectionKey, string $operation, Model $owner, ?string $reference = null): ?string
     {
@@ -225,25 +274,117 @@ final class XeroWriteRecorder
         ]));
     }
 
-    private function describeCollision(
-        string $claimKey,
+    /**
+     * The row holding this claim, or null when there is none or it cannot be
+     * read. Both mean the same to a caller: nothing proves a write completed.
+     */
+    private function findClaim(string $claimKey): ?XeroWriteRecord
+    {
+        try {
+            return XeroWriteRecord::query()->where('claim_key', $claimKey)->first();
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Somebody holds this claim already: announce it, and hand back the
+     * exception that stops the caller.
+     *
+     * A row that cannot be found or read is treated as in flight -- the state
+     * that never re-sends -- with no claimedAt.
+     */
+    private function collision(
+        string $connectionKey,
         string $operation,
         ?string $ownerType,
         ?string $ownerId,
+        ?string $reference,
+        ?XeroWriteRecord $existing,
     ): XeroWriteAlreadyClaimedException {
-        $owner = $ownerType !== null ? $ownerType.'#'.$ownerId : null;
+        $owner = $this->ownerLabel($ownerType, $ownerId);
 
+        $exception = $existing?->succeeded() && $existing->xero_id !== null
+            ? XeroWriteAlreadyClaimedException::confirmed($operation, $existing->xero_id, $owner)
+            : XeroWriteAlreadyClaimedException::pending($operation, $owner);
+
+        // Built AND dispatched inside the try, because nothing about the event
+        // may replace the exception: it is the duplicate protection, and the
+        // documented way to handle it -- read xeroId() and carry on -- only
+        // works if it arrives.
+        //
+        // Constructed with named arguments and handed to event(), rather than
+        // XeroWriteBlocked::dispatch(...): on Laravel 11 and early 12,
+        // dispatch() declares no parameters and reads func_get_args(), so a
+        // named argument throws there.
         try {
-            $existing = XeroWriteRecord::query()->where('claim_key', $claimKey)->first();
-        } catch (Throwable) {
-            return XeroWriteAlreadyClaimedException::pending($operation, $owner);
+            event(new XeroWriteBlocked(
+                connectionKey: $connectionKey,
+                operation: $operation,
+                ownerType: $ownerType,
+                ownerId: $ownerId,
+                reference: $reference,
+                pending: $exception->isPending(),
+                xeroId: $exception->xeroId(),
+                claimedAt: $existing?->claimed_at,
+            ));
+        } catch (Throwable $e) {
+            $this->logger->warning(
+                'xero-bridge: a XeroWriteBlocked listener failed. The write is still refused as a duplicate.',
+                ['operation' => $operation, 'exception' => $e->getMessage()],
+            );
         }
 
-        if ($existing?->succeeded() && $existing->xero_id !== null) {
-            return XeroWriteAlreadyClaimedException::confirmed($operation, $existing->xero_id, $owner);
+        return $exception->withConnectionKey($connectionKey);
+    }
+
+    /**
+     * The claim could not be recorded, and nothing says the write already
+     * happened.
+     *
+     * The one place both modes decide, so the default path stays exactly what
+     * it always was: say so loudly and carry on unprotected, because recording
+     * must never take down the write itself. Strict mode refuses instead --
+     * before the request, so nothing reached Xero and a retry is safe.
+     *
+     * @throws XeroWriteLedgerUnavailableException in strict mode
+     */
+    private function unrecorded(
+        string $connectionKey,
+        string $operation,
+        ?string $owner,
+        bool $strict,
+        Throwable $e,
+    ): WriteClaim {
+        if ($strict) {
+            throw XeroWriteLedgerUnavailableException::forClaim($operation, $owner, $e)
+                ->withConnectionKey($connectionKey);
         }
 
-        return XeroWriteAlreadyClaimedException::pending($operation, $owner);
+        $this->logger->error(
+            'xero-bridge: could not claim a write, proceeding WITHOUT duplicate protection.',
+            ['operation' => $operation, 'exception' => $e->getMessage()],
+        );
+
+        return WriteClaim::none($operation);
+    }
+
+    /**
+     * SQLSTATE class 23, "integrity constraint violation": the database was
+     * reachable and refused this row, so asking it who holds the claim is
+     * cheap and meaningful. Not consulted for a connection failure, where the
+     * question would only wait for a second timeout.
+     */
+    private function isIntegrityFailure(Throwable $e): bool
+    {
+        return $e instanceof QueryException
+            && str_starts_with((string) ($e->errorInfo[0] ?? $e->getCode()), '23');
+    }
+
+    /** How an owner is named in a message: 'App\Models\Order#42'. */
+    private function ownerLabel(?string $ownerType, ?string $ownerId): ?string
+    {
+        return $ownerType !== null ? $ownerType.'#'.$ownerId : null;
     }
 
     /** @param array<string, mixed> $resource */
@@ -273,22 +414,54 @@ final class XeroWriteRecorder
         return null;
     }
 
-    private function isUniqueViolation(QueryException $e): bool
+    private function enabled(): bool
     {
-        $state = (string) ($e->errorInfo[0] ?? $e->getCode());
-
-        return $state === '23000' || $state === '23505';
+        return (bool) $this->config->get('writes.enabled', false);
     }
 
+    private function tablePresent(): bool
+    {
+        return $this->tables->has(
+            $this->config->get('database.connection'),
+            (string) $this->config->get('writes.table', 'xero_write_records'),
+            'xero-bridge-migrations',
+        );
+    }
+
+    /** The read path's gate: on, and the table is there. */
     private function usable(): bool
     {
-        if (! $this->config->get('writes.enabled', false)) {
+        if (! $this->enabled()) {
             return false;
         }
 
-        // Guards against the surrounding-transaction mistake, which would make
-        // the claim invisible to other workers and erasable by a rollback.
-        if (DB::transactionLevel() > 0) {
+        $this->warnIfInsideTransaction();
+
+        return $this->tablePresent();
+    }
+
+    /**
+     * Guards against the surrounding-transaction mistake, which would make
+     * the claim invisible to other workers and erasable by a rollback.
+     *
+     * Reads the LEDGER's connection, the one the claim is written through. A
+     * transaction open only on another connection cannot hide the claim, and
+     * one on the ledger's connection can, wherever XERO_DB_CONNECTION points.
+     *
+     * A warning in every mode, strict included: a consumer's own test suite
+     * runs inside a RefreshDatabase transaction and must keep working.
+     */
+    private function warnIfInsideTransaction(): void
+    {
+        try {
+            $level = DB::connection($this->config->get('database.connection'))->transactionLevel();
+        } catch (Throwable) {
+            // A connection that cannot even be resolved is for the claim to
+            // report, through the same path as any other storage failure.
+            return;
+        }
+
+        if ($level > 0) {
             $this->logger->warning(
                 'xero-bridge: a Xero write is inside a database transaction, so its claim cannot '
                 .'protect against duplicates -- it is invisible to other workers until commit, and '
@@ -296,11 +469,5 @@ final class XeroWriteRecorder
                 .'outside the transaction.',
             );
         }
-
-        return $this->tables->has(
-            $this->config->get('database.connection'),
-            (string) $this->config->get('writes.table', 'xero_write_records'),
-            'xero-bridge-migrations',
-        );
     }
 }

@@ -819,6 +819,7 @@ Identical to `create()`.
       'default' => [
           'account_code' => env('XERO_ACCOUNT_CODE'),   // sales, for invoice lines
           'payment_account_code' => env('XERO_PAYMENT_ACCOUNT_CODE'),  // bank, for payments
+          // ...tax_type, currency and branding_theme_id as before
       ],
   ],
   ```
@@ -830,10 +831,11 @@ Identical to `create()`.
       ->createForInvoice($invoiceId, 4500.00);
   ```
 
-  > ⚠️ Resources are memoised per connection key, and the defaults are baked in when the resource
-  > is first built. If anything already called `payments()` on that connection in this process,
-  > `withDefaults()` hands you the memoised instance and the override is silently ignored. Pass
-  > `$accountCode` per call, or set it in config, unless you know the resource is unresolved.
+  The override applies to that expression only. It is honoured even if `payments()` was already
+  resolved for this connection earlier in the process, and it never reaches a later plain
+  `XeroBridge::payments()` call, which goes back to the configured value — or throws, if there is
+  none. `tests/Unit/WithDefaultsTest.php` pins both. Passing `$accountCode` per call works just as
+  well. [Overriding defaults](02-invoices.md#overriding-defaults) has the rest.
 
   These are two different accounts and mixing them up posts revenue to the bank ledger.
 - With neither an argument nor a default, throws `InvalidArgumentException` pointing at

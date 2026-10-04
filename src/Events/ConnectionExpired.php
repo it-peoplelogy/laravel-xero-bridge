@@ -15,8 +15,8 @@ use Peoplelogy\XeroBridge\Models\XeroConnection;
  * spam whoever is listening. A transient 5xx, a timeout, or a failure to save
  * rotated tokens must never fire this.
  *
- * This is the event to hang an alert on: the host project's Xero connection
- * dropped in June and nobody was told for months.
+ * This is the event to hang an alert on: a connection that dies silently can
+ * go unnoticed for months, and this event exists so it cannot.
  */
 class ConnectionExpired
 {

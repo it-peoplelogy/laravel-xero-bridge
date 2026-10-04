@@ -26,9 +26,14 @@ abstract class Resource
     /**
      * The consuming application's record this write belongs to, if any.
      *
-     * Scoped to the NEXT write only -- like withContactMutation() and
-     * replacingLineItems(), it resets itself after one call. A lingering owner
-     * would silently attach the wrong record to the next invoice.
+     * Only ever set on the copy for() returns, never on the shared instance
+     * that XeroBridge::invoices(), contacts() and payments() hand out: that
+     * one is memoised per connection for the life of the process, so an owner
+     * set on it would silently attach the wrong record to the next caller's
+     * write. Nothing clears it after a write either. Every write made through
+     * the copy names the same owner, so a second one is refused as a
+     * duplicate unless reference() tells the two apart -- chain for() into
+     * the call rather than keeping the copy.
      */
     private ?Model $owner = null;
 
@@ -71,6 +76,18 @@ abstract class Resource
         $clone->reference = $reference;
 
         return $clone;
+    }
+
+    /**
+     * Whether for() named an owner on this copy.
+     *
+     * For a write path that takes no claim, so it can say that the duplicate
+     * protection the caller asked for does not apply to it, rather than
+     * quietly sending the write unprotected.
+     */
+    protected function hasOwner(): bool
+    {
+        return $this->owner !== null;
     }
 
     /**

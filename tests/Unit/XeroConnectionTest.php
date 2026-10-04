@@ -38,8 +38,8 @@ it('encrypts both tokens at rest', function () {
 it('never serialises either token', function () {
     // Regression guard. The encrypted cast protects data at rest but does
     // nothing once hydrated: toArray(), a JSON response, an Inertia prop or
-    // Log::info($model) would all emit the DECRYPTED token. This is the exact
-    // leak live in pips today via LogsActivity->logAll() on XeroToken.
+    // Log::info($model) would all emit the DECRYPTED token. This is exactly
+    // what an activity-log trait with logAll() would leak.
     $connection = connection();
 
     $array = $connection->toArray();

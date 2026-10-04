@@ -217,7 +217,7 @@ blockquote h3 {
 <div class="sheet">
 <div class="masthead">
   <div class="kicker">Developer reference</div>
-  <div class="meta">Generated 29 September 2026 &middot; package version v1.3.0</div>
+  <div class="meta">Generated 4 October 2026 &middot; package version v1.5.0</div>
 </div>
 <h1>Using <code>peoplelogy/laravel-xero-bridge</code></h1>
 <p>A practical reference for the six Xero flows most applications need: how to call each one,
@@ -226,13 +226,16 @@ what to pass, what comes back, and what goes wrong.</p>
 model — the package deliberately contains no bookkeeping logic, so <em>when</em> to raise an invoice and
 <em>what</em> goes on it stay yours to decide.</p>
 <p>Every flow below can be run by hand, against a real Xero organisation, from the package’s own test
-console at <strong><code>/xero/console</code></strong>. It is there as soon as the package is installed, in every
-environment except production, and its actions map one-to-one onto the flows in this document — so
-the quickest way to understand a flow is usually to run it there and read the JSON it returns.
-Writes are refused unless the connected organisation is a Xero Demo Company or explicitly
-allow-listed.</p>
+console at <strong><code>/xero/console</code></strong>. It is <strong>off until <code>XERO_CONSOLE_ENABLED=true</code></strong> is set in the
+environment that should have it — in every environment, whatever <code>APP_ENV</code> says — and its actions
+map one-to-one onto the flows in this document, so the quickest way to understand a flow is usually
+to switch it on locally, run it there and read the JSON it returns (credentials and bank details
+are masked). Writes are refused unless the connected organisation is a Xero Demo Company or
+explicitly allow-listed. Reads are not: behind the default <code>web,auth</code> middleware any signed-in user
+can read that organisation's invoices and contacts, so narrow <code>XERO_CONSOLE_MIDDLEWARE</code> wherever you
+turn it on.</p>
 <blockquote>
-<p><strong>Version note.</strong> Written against <code>peoplelogy/laravel-xero-bridge</code> v1.3.0. Method signatures are
+<p><strong>Version note.</strong> Written against <code>peoplelogy/laravel-xero-bridge</code> v1.5.0. Method signatures are
 read from the package source; request and response samples are reproduced from the package's own
 docs in this same directory, which are the authority wherever the two
 disagree. The GUIDs and figures in them are illustrative.</p>
@@ -335,17 +338,47 @@ wrapper over exactly this — every method in the tables below works identically
 <td>Writing a listener</td>
 </tr>
 <tr>
+<td><code>OAuth\Actor</code></td>
+<td>Type-hinting <code>XeroConnected::$actor</code>, or building one in a test</td>
+</tr>
+<tr>
 <td><code>Contracts\ConnectionRepository</code></td>
 <td>Replacing how connections are stored</td>
+</tr>
+<tr>
+<td><code>Webhooks\WebhookSignature</code></td>
+<td>Signing a test webhook delivery: <code>compute()</code>, <code>isValid()</code>, <code>HEADER</code></td>
+</tr>
+<tr>
+<td><code>Jobs\ProcessXeroWebhook</code></td>
+<td>Running your listeners in a test: <code>(new ProcessXeroWebhook($payload))-&gt;handle()</code></td>
+</tr>
+<tr>
+<td><code>Models\XeroApiCall</code></td>
+<td>Reading captured API calls, through its <code>forOwner()</code>, <code>failed()</code>, <code>logicalCall()</code> and <code>channel()</code> scopes</td>
+</tr>
+<tr>
+<td><code>Capture\ApiCallRecorder</code></td>
+<td>Attributing captured calls to one of your records, with <code>forOwner()</code></td>
+</tr>
+<tr>
+<td><code>MyInvois\Facades\MyInvois</code>, <code>MyInvois\IdType</code></td>
+<td>Validating a TIN (<a href="#validate-the-tin-before-you-store-it">flow 3</a>)</td>
+</tr>
+<tr>
+<td><code>MyInvois\MyInvoisAudit</code></td>
+<td>Erasing stored verdicts: <code>forgetOwner()</code>, <code>forgetSubject()</code></td>
 </tr>
 </tbody>
 </table>
 <p>The <strong>resources</strong> — <code>Resources\Invoices</code>, <code>Contacts</code>, <code>Payments</code>, <code>Settings</code> — are never imported.
 You get them from the manager (<code>XeroBridge::invoices()</code>), and only type-hint them if you are
 passing one around.</p>
-<p>Everything under <code>Client\</code>, <code>OAuth\</code>, <code>Http\</code>, <code>Jobs\</code>, <code>Repositories\</code> and <code>Webhooks\</code> is
-internal plumbing. It is reachable, but if you find yourself importing from there, check the
-facade cannot already do it.</p>
+<p>Everything else under <code>Client\</code>, <code>OAuth\</code>, <code>Http\</code>, <code>Jobs\</code>, <code>Repositories\</code> and <code>Webhooks\</code> is
+internal plumbing — apart from <code>OAuth\Actor</code>, <code>Webhooks\WebhookSignature</code> and
+<code>Jobs\ProcessXeroWebhook</code> above, and the <code>Webhooks\WebhookEvent</code> and <code>WebhookEnvelope</code> objects that
+<code>XeroWebhookReceived</code> hands you. The README's Versioning section lists the whole public API. It is reachable, but if you find
+yourself importing from there, check the facade cannot already do it.</p>
 <h3 id="the-exceptions-in-full">The exceptions, in full</h3>
 <p>All under <code>Peoplelogy\XeroBridge\Exceptions\</code>, all extending <code>XeroBridgeException</code>:</p>
 <p><code>XeroBridgeException</code> · <code>XeroAuthenticationException</code> · <code>XeroConfigurationException</code> ·
@@ -354,10 +387,12 @@ facade cannot already do it.</p>
 <code>XeroServiceUnavailableException</code> · <code>XeroIdentityUnavailableException</code> ·
 <code>InvalidInvoicePayloadException</code> · <code>InvalidInvoiceTransitionException</code> ·
 <code>InvoiceCannotBeVoidedException</code> · <code>UnsafeContactPayloadException</code> ·
-<code>ConnectionKeyConflictException</code> · <code>TenantAlreadyConnectedException</code></p>
+<code>ConnectionKeyConflictException</code> · <code>TenantAlreadyConnectedException</code> ·
+<code>XeroWriteAlreadyClaimedException</code> · <code>XeroWriteLedgerUnavailableException</code></p>
 <p>See <a href="#error-handling">error handling</a> for which to catch and why.</p>
 <h3 id="events-you-can-listen-to">Events you can listen to</h3>
-<p>All under <code>Peoplelogy\XeroBridge\Events\</code>, with public readonly properties:</p>
+<p>All under <code>Peoplelogy\XeroBridge\Events\</code>, with public properties — every one readonly except
+<code>XeroConnected::$actor</code>:</p>
 <table>
 <thead>
 <tr>
@@ -368,7 +403,7 @@ facade cannot already do it.</p>
 <tbody>
 <tr>
 <td><code>XeroConnected</code></td>
-<td><code>XeroConnection $connection</code>, <code>bool $wasRepointed</code></td>
+<td><code>XeroConnection $connection</code>, <code>bool $wasRepointed</code>, <code>?Actor $actor</code></td>
 </tr>
 <tr>
 <td><code>TokenRefreshed</code></td>
@@ -384,11 +419,15 @@ facade cannot already do it.</p>
 </tr>
 <tr>
 <td><code>XeroWebhookReceived</code></td>
-<td><code>WebhookEvent $event</code>, <code>WebhookEnvelope $envelope</code></td>
+<td><code>WebhookEvent $event</code>, <code>WebhookEnvelope $envelope</code> — plus <code>connection()</code>, the stored <code>?XeroConnection</code> for the event's organisation</td>
 </tr>
 <tr>
 <td><code>XeroWebhookSignatureFailed</code></td>
 <td><code>?string $signature</code>, <code>int $bodyLength</code>, <code>?string $ip</code></td>
+</tr>
+<tr>
+<td><code>XeroWriteBlocked</code></td>
+<td><code>string $connectionKey</code>, <code>string $operation</code>, <code>?string $ownerType</code>, <code>?string $ownerId</code>, <code>?string $reference</code>, <code>bool $pending</code>, <code>?string $xeroId</code>, <code>?CarbonImmutable $claimedAt</code></td>
 </tr>
 </tbody>
 </table>
@@ -400,20 +439,37 @@ Event::listen(ConnectionExpired::class, function (ConnectionExpired $e) {
 });
 </code></pre>
 <p><code>ConnectionExpired</code> is the one worth wiring up: it fires when the refresh token dies, which no
-amount of retrying fixes — a human has to reconnect.</p>
+amount of retrying fixes — a human has to reconnect. It does not fire when someone disconnects the
+organisation from inside Xero: the package cannot see that happen, and Xero typically answers the
+next call for it with a 403 (<code>XeroAuthenticationException</code>).</p>
+<p><code>XeroConnected::$actor</code> says who completed the consent: the signed-in user's <code>id</code>, <code>type</code> (the
+morph alias, or the class name) and <code>guard</code>, as plain scalars — or <code>null</code> when nobody was signed in
+on the callback, or the user could not be resolved. It is the one property that is not readonly, so
+that an event queued by an earlier release still unserialises, with <code>null</code>. Read it as
+<code>$event-&gt;actor?-&gt;id</code>.</p>
 <p><code>XeroWebhookSignatureFailed</code> fires during Xero's intent-to-receive check by design — it sends
 deliberately bad signatures to confirm you reject them — so alert on a sustained stream, not on
-one.</p>
+one. Its listeners run inside the webhook request, so keep them fast; one that throws is logged and
+the 401 still goes out.</p>
+<p><code>XeroWriteBlocked</code> fires just before every <code>XeroWriteAlreadyClaimedException</code> (see
+<a href="#error-handling">error handling</a>). A block with <code>$pending</code> set and a <code>$claimedAt</code> more than a few
+minutes old is a stuck claim — something was sent to Xero and the outcome never recorded, and every
+later write for that record is refused until a person resolves it. That is the one to alert on.</p>
 <h3 id="artisan-commands">Artisan commands</h3>
-<pre><code class="language-bash">php artisan xero-bridge:install          # publish config + migration, print the .env keys
-php artisan xero-bridge:status           # connections, expiry, missing config — no API call
+<pre><code class="language-bash">php artisan xero-bridge:install          # publish config + migrations, print the .env keys
+php artisan xero-bridge:status           # connections, expiry, config, tables, locks — no API call
 php artisan xero-bridge:refresh-tokens   # run hourly from your scheduler
+php artisan xero-bridge:prune            # trim the optional tables, report stuck write claims
 </code></pre>
 <pre><code class="language-php">// routes/console.php
 Schedule::command('xero-bridge:refresh-tokens')-&gt;hourly()-&gt;withoutOverlapping()-&gt;onOneServer();
+Schedule::command('xero-bridge:prune')-&gt;daily();   // nothing to do while the optional tables are off
 </code></pre>
-<p><code>xero-bridge:status</code> exits <code>0</code> when healthy, <code>1</code> on incomplete config, <code>2</code> when a connection needs
-reauthorising — so it can be wired straight into monitoring.</p>
+<p><code>xero-bridge:status</code> exits <code>0</code> when healthy, <code>1</code> on incomplete config, a connections table that is
+missing, unreadable or not the package's own, or stored tokens the current <code>APP_KEY</code> cannot decrypt,
+<code>2</code> when a connection needs reauthorising — and with
+<code>--strict</code>, <code>1</code> on any warning or a lock pre-flight that did not pass — so it can be wired straight
+into monitoring.</p>
 <h3 id="four-resources">Four resources</h3>
 <pre><code class="language-php">XeroBridge::contacts()     // Contacts
 XeroBridge::invoices()     // Invoices
@@ -422,9 +478,11 @@ XeroBridge::settings()     // Organisation, Accounts, TaxRates, BrandingThemes (
 </code></pre>
 <p>Anything the package has not wrapped is still reachable:</p>
 <pre><code class="language-php">XeroBridge::request('GET', 'CreditNotes');          // decoded array
-XeroBridge::raw('GET', 'Invoices/{id}');            // the raw Response, for PDFs
+XeroBridge::raw('GET', 'CreditNotes');              // the undecoded Response: status, headers, body
 XeroBridge::client()-&gt;get('Currencies', ['where' =&gt; '...']);
 </code></pre>
+<p>All three send <code>Accept: application/json</code>, and a header of your own cannot override it — so for an
+invoice's PDF use <code>invoices()-&gt;pdf($id)</code>, which asks for one.</p>
 <h3 id="which-organisation-you-are-talking-to">Which organisation you are talking to</h3>
 <p>Most applications connect exactly one organisation, in which case you never name it:</p>
 <pre><code class="language-php">XeroBridge::invoices()-&gt;find('INV-0042');                      // the default connection
@@ -434,7 +492,7 @@ XeroBridge::connection('acme')-&gt;invoices()-&gt;find('INV-0042');  // a named 
 scoped to that expression alone and cannot leak into the next call in the same request. The
 default connection name comes from <code>XERO_DEFAULT_CONNECTION</code> (<code>default</code>).</p>
 <h3 id="what-you-get-back">What you get back</h3>
-<p>Every method returns <strong>plain PHP arrays, already unwrapped</strong> from Xero's envelope. Xero answers
+<p>Records come back as <strong>plain PHP arrays, already unwrapped</strong> from Xero's envelope. Xero answers
 <code>POST /Invoices</code> with <code>{&quot;Invoices&quot;: [ ... ]}</code>; <code>create()</code> hands you the inner element.</p>
 <table>
 <thead>
@@ -455,6 +513,14 @@ default connection name comes from <code>XERO_DEFAULT_CONNECTION</code> (<code>d
 <tr>
 <td><code>list&lt;array&gt;</code> — possibly empty</td>
 <td><code>list()</code>, <code>accounts()</code>, <code>taxRates()</code></td>
+</tr>
+<tr>
+<td><code>LazyCollection</code> of records</td>
+<td><code>all()</code> — walks every page (<a href="#flow-6--list-invoices">flow 6</a>)</td>
+</tr>
+<tr>
+<td><code>BatchResult</code> — per-invoice outcome</td>
+<td><code>createMany()</code></td>
 </tr>
 <tr>
 <td><code>void</code></td>
@@ -674,15 +740,19 @@ contact, call <code>contacts()-&gt;update($contactId, [...])</code>.</li>
 <li><strong><code>Contact</code> must carry <code>ContactID</code> and nothing else.</strong> With <code>ContactID</code> plus any other field,
 Xero applies those fields to the <em>contact record</em> and <strong>deletes any <code>ContactPersons</code> you left
 out</strong>. The package refuses this with <code>UnsafeContactPayloadException</code> rather than letting it
-happen; <code>withContactMutation()</code> opts in if you genuinely mean it. It is irreversible and nobody
-notices for weeks.</li>
+happen. If you genuinely mean it, chain the opt-in in front of the call —
+<code>XeroBridge::invoices()-&gt;withContactMutation()-&gt;create([...])</code>. It returns a copy, so on a line of
+its own it changes nothing and the payload is still refused. It is irreversible and nobody notices
+for weeks.</li>
 <li>A <code>DRAFT</code> can be deleted outright. Once <code>AUTHORISED</code> it can only be voided, and it stays visible
 in Xero forever.</li>
 <li>An unknown <code>AccountCode</code> is a 400 → <code>XeroValidationException</code>, with Xero's own message in
 <code>validationErrors()</code>.</li>
 <li>The <code>Idempotency-Key</code> is retained by Xero for <strong>six minutes</strong>. It protects an immediate network
 retry; it does <strong>not</strong> deduplicate a queued job retried an hour later. Persist <code>InvoiceID</code> for
-that.</li>
+that — or name the record the invoice is for, <code>XeroBridge::invoices()-&gt;for($order)-&gt;create([...])</code>,
+with the write ledger switched on (<code>XERO_WRITES_LEDGER=true</code> and its table migrated), and a second
+attempt for that record throws <code>XeroWriteAlreadyClaimedException</code> instead of reaching Xero.</li>
 </ul>
 <hr />
 <h2 id="flow-22--create-an-invoice-that-ends-up-paid">Flow 2.2 — create an invoice that ends up PAID</h2>
@@ -924,7 +994,9 @@ $invoices = XeroBridge::invoices()-&gt;list(
 </code></pre>
 <p>Returns <code>list&lt;array&gt;</code> — one page. For everything matching, <code>all()</code> returns a <code>LazyCollection</code> and
 walks Xero's pagination for you:</p>
-<pre><code class="language-php">XeroBridge::invoices()-&gt;all($filter)-&gt;each(fn (array $invoice) =&gt; /* ... */);
+<pre><code class="language-php">XeroBridge::invoices()-&gt;all($filter)-&gt;each(function (array $invoice) {
+    // ...
+});
 </code></pre>
 <h3 id="filter-methods">Filter methods</h3>
 <table>
@@ -993,8 +1065,11 @@ daily rate limit. <code>all()</code> pages at 100 unless told otherwise.</li>
 </ul>
 <hr />
 <h2 id="error-handling">Error handling</h2>
-<p>Every failure is a typed exception extending <code>Peoplelogy\XeroBridge\Exceptions\XeroBridgeException</code>.
-Catch the specific one when you can act on it differently; catch the base class as a backstop.</p>
+<p>Every failure from Xero, and every refusal by one of the package's own guards, is a typed exception
+extending <code>Peoplelogy\XeroBridge\Exceptions\XeroBridgeException</code>. Catch the specific one when you can
+act on it differently; catch the base class as a backstop. A malformed argument — a second lookup
+key, a page size out of range, a payment with no account — throws PHP's own
+<code>InvalidArgumentException</code> instead, before anything is sent.</p>
 <pre><code class="language-php">use Peoplelogy\XeroBridge\Exceptions\XeroBridgeException;
 use Peoplelogy\XeroBridge\Exceptions\XeroRateLimitException;
 use Peoplelogy\XeroBridge\Exceptions\XeroValidationException;
@@ -1049,17 +1124,27 @@ try {
 <tr>
 <td><code>UnsafeContactPayloadException</code></td>
 <td>An invoice <code>Contact</code> block carries <code>ContactID</code> <strong>plus</strong> other fields</td>
-<td>Send <code>ContactID</code> alone</td>
+<td>Send <code>ContactID</code> alone — or, to update the contact on purpose, chain <code>withContactMutation()</code> in front of the call</td>
 </tr>
 <tr>
 <td><code>InvalidInvoicePayloadException</code></td>
-<td><code>Type</code> missing on create</td>
-<td>Nothing was sent</td>
+<td><code>Type</code> missing on create, or <code>LineItems</code> without a <code>LineItemID</code> on update</td>
+<td>Nothing was sent. To replace every line on purpose, chain <code>replacingLineItems()</code> in front of <code>update()</code></td>
 </tr>
 <tr>
 <td><code>InvalidInvoiceTransitionException</code></td>
 <td>e.g. voiding a DRAFT</td>
 <td>Checked locally against <code>InvoiceTransitions</code>, so the message names the current status</td>
+</tr>
+<tr>
+<td><code>XeroWriteAlreadyClaimedException</code></td>
+<td>The write ledger already holds this write (<code>for($order)</code>)</td>
+<td><strong>Stop — do not retry.</strong> <code>xeroId()</code> is the id already created; <code>isPending()</code> means something was sent and never recorded, so check Xero</td>
+</tr>
+<tr>
+<td><code>XeroWriteLedgerUnavailableException</code></td>
+<td><code>XERO_WRITES_STRICT</code> is on and the ledger could not record the claim</td>
+<td>Nothing was sent. <strong>Retry</strong> once the ledger table is migrated and the database is reachable</td>
 </tr>
 <tr>
 <td><code>XeroRateLimitException</code></td>
@@ -1173,13 +1258,15 @@ of who you are dealing with. And because the pair has only been validated togeth
 <ul>
 <li>The numbered guides in this directory — <a href="01-getting-started.md">01-getting-started</a>,
 <code>02-invoices</code>, <code>03-contacts-payments-settings</code>, <code>04-webhooks-and-events</code>,
-<code>05-commands-and-errors</code>, <code>06-recipes</code>, <code>07-test-console</code>. Deeper than this page on every topic,
-and the authority where the two disagree.</li>
-<li>The test console at <code>/xero/console</code> — runs every flow below by hand and shows the request
-timings, the rate limit Xero reported and the full response. See <code>07-test-console</code> for the write
-guard and for how it is switched on and off.</li>
-<li><code>php artisan xero-bridge:status</code> — connections, token expiry and missing configuration, without
-calling Xero</li>
+<code>05-commands-and-errors</code>, <code>06-recipes</code>, <code>07-test-console</code>, <code>09-persistence</code> (duplicate protection
+for writes, webhook replay dedupe) and <code>10-api-capture</code>. Deeper than this page on every topic, and
+the authority where the two disagree.</li>
+<li>The test console at <code>/xero/console</code> — once switched on with <code>XERO_CONSOLE_ENABLED=true</code>, runs every
+flow below by hand and shows the request timings, the rate limit Xero reported and Xero's
+response, with credentials and bank details masked. See <code>07-test-console</code> for the write guard
+and for who can reach it.</li>
+<li><code>php artisan xero-bridge:status</code> — connections, token expiry, missing configuration, the package's
+tables and the lock store, without calling Xero</li>
 <li><code>08-myinvois-tin-validation</code> in the package docs — the optional LHDN MyInvois taxpayer TIN
 validator: turning it on, the 404-is-an-answer contract, caching and troubleshooting</li>
 <li><a href="https://developer.xero.com/documentation/api/accounting/overview">Xero Accounting API reference</a>

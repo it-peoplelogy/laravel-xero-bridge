@@ -15,14 +15,20 @@ use Peoplelogy\XeroBridge\Filters\InvoiceFilter;
 use Peoplelogy\XeroBridge\Support\BatchResult;
 use Peoplelogy\XeroBridge\Support\IdempotencyKey;
 use Peoplelogy\XeroBridge\Support\InvoiceTransitions;
+use Psr\Log\LoggerInterface;
 use Throwable;
 
 class Invoices extends Resource
 {
-    /** Set for one call by withContactMutation(). */
+    /**
+     * Set by withContactMutation(), and only ever on the copy it returns.
+     *
+     * Neither flag is written anywhere else, so nothing has to remember to
+     * clear it: the shared instance never carries one.
+     */
     private bool $allowContactMutation = false;
 
-    /** Set for one call by replacingLineItems(). */
+    /** Set by replacingLineItems(), and only ever on the copy it returns. */
     private bool $allowLineItemReplacement = false;
 
     protected function endpoint(): string
@@ -32,24 +38,50 @@ class Invoices extends Resource
 
     /**
      * Deliberately opt in to Xero updating the CONTACT RECORD as a side
-     * effect of writing an invoice. Resets after one call.
+     * effect of writing an invoice.
+     *
+     *     XeroBridge::invoices()->withContactMutation()->create($invoice);
+     *
+     * Returns a COPY with the opt-in set, never $this -- the idiom for() and
+     * reference() already use, and for the same reason. XeroBridge::invoices()
+     * hands every caller the one instance memoised for that connection for
+     * the life of the process, so a flag set on it would outlive the call that
+     * asked for it: in a queue worker, or under Octane, later writes that
+     * never opted in would go out with the guard off.
+     *
+     * So the opt-in covers every call made through the returned copy --
+     * including every invoice in a createMany() -- and nothing else. It works
+     * on either side of for(). Called on a line of its own it changes
+     * nothing, and the guard still refuses the payload with nothing sent:
+     * chain it. A copy kept in a variable stays opted in for every call made
+     * through it, so keep one only while every one of those calls means to
+     * rewrite the contact.
      */
     public function withContactMutation(): static
     {
-        $this->allowContactMutation = true;
+        $clone = clone $this;
+        $clone->allowContactMutation = true;
 
-        return $this;
+        return $clone;
     }
 
     /**
      * Deliberately opt in to Xero deleting and recreating line items on
-     * update. Resets after one call.
+     * update.
+     *
+     *     XeroBridge::invoices()->replacingLineItems()->update($id, $invoice);
+     *
+     * Returns a COPY, never $this, exactly like withContactMutation(): the
+     * opt-in covers every call made through that copy and cannot reach any
+     * other caller of the shared instance. Called on a line of its own it
+     * changes nothing, and update() still refuses the lines with nothing sent.
      */
     public function replacingLineItems(): static
     {
-        $this->allowLineItemReplacement = true;
+        $clone = clone $this;
+        $clone->allowLineItemReplacement = true;
 
-        return $this;
+        return $clone;
     }
 
     /**
@@ -102,6 +134,11 @@ class Invoices extends Resource
      * Accepts a keyed array too, hence the array_values() normalisation --
      * Xero needs a JSON array here, not an object.
      *
+     * NOT covered by the write ledger: no claim is taken, so naming an owner
+     * with for() protects nothing here. That is logged rather than thrown --
+     * refusing would break every caller already doing it -- and create(),
+     * once per invoice, is the protected path.
+     *
      * @param  array<array-key, array<string, mixed>>  $invoices
      */
     public function createMany(array $invoices, ?string $idempotencyKey = null): BatchResult
@@ -110,6 +147,15 @@ class Invoices extends Resource
 
         $key = $idempotencyKey ?? IdempotencyKey::generate();
         IdempotencyKey::assertValid($key);
+
+        if ($this->hasOwner()) {
+            app(LoggerInterface::class)->warning(
+                'xero-bridge: createMany() was called on a resource named with for(), but only create() '
+                .'is protected by the write ledger. This batch is sent without a claim, so a retry can '
+                .'create every invoice in it again. Call create() once per invoice to protect each one.',
+                ['connection' => $this->connectionKey, 'invoices' => count($prepared)],
+            );
+        }
 
         $body = $this->client->post(
             $this->endpoint(),
@@ -233,8 +279,6 @@ class Invoices extends Resource
         if (isset($invoice['LineItems']) && ! $this->allowLineItemReplacement) {
             foreach ((array) $invoice['LineItems'] as $line) {
                 if (! is_array($line) || ! isset($line['LineItemID'])) {
-                    $this->resetGuards();
-
                     throw InvalidInvoicePayloadException::unsafeLineItems();
                 }
             }
@@ -390,8 +434,6 @@ class Invoices extends Resource
     private function prepare(array $invoice): array
     {
         if (! isset($invoice['Type']) || $invoice['Type'] === '') {
-            $this->resetGuards();
-
             throw InvalidInvoicePayloadException::missingType();
         }
 
@@ -415,8 +457,6 @@ class Invoices extends Resource
         $extra = array_values(array_diff(array_keys($contact), ['ContactID']));
 
         if ($extra !== [] && ! $this->allowContactMutation) {
-            $this->resetGuards();
-
             throw UnsafeContactPayloadException::make($extra);
         }
 
@@ -466,8 +506,6 @@ class Invoices extends Resource
         if (($theme = $this->defaults->brandingThemeId()) !== null && ! $this->hasKey($invoice, 'BrandingThemeID')) {
             $invoice['BrandingThemeID'] = $theme;
         }
-
-        $this->resetGuards();
 
         return $invoice;
     }
@@ -529,11 +567,5 @@ class Invoices extends Resource
                 .'InvoiceNumber without a slash; to look up by number, use invoiceNumbers() on a filter.'
             );
         }
-    }
-
-    private function resetGuards(): void
-    {
-        $this->allowContactMutation = false;
-        $this->allowLineItemReplacement = false;
     }
 }

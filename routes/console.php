@@ -8,11 +8,13 @@ use Peoplelogy\XeroBridge\Http\Middleware\EnsureConsoleEnabled;
 
 /*
 | The test console. A separate file from the OAuth routes because it is gated
-| separately -- off in production by default -- and because a host that turns
-| the console off should not lose connect/callback with it.
+| separately -- off unless XERO_CONSOLE_ENABLED=true, in every environment --
+| and because the console being off must not take connect/callback with it.
 |
 | Like those routes it needs a SESSION: the page posts a CSRF token with every
-| action. The default middleware is ['web', 'auth'].
+| action. The default middleware is ['web', 'auth'], which admits ANY
+| authenticated user; the fallback below is that same default, for a published
+| config that has lost the line.
 |
 | EnsureConsoleEnabled is attached here rather than left to the host's
 | middleware config, because it is what makes the gate survive `route:cache`.
@@ -24,7 +26,7 @@ use Peoplelogy\XeroBridge\Http\Middleware\EnsureConsoleEnabled;
 
 Route::middleware(array_merge(
     [EnsureConsoleEnabled::class],
-    (array) config('xero-bridge.console.middleware'),
+    (array) config('xero-bridge.console.middleware', ['web', 'auth']),
 ))
     ->prefix(
         trim((string) config('xero-bridge.routes.prefix', 'xero'), '/')

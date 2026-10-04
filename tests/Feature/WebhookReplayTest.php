@@ -2,11 +2,16 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Peoplelogy\XeroBridge\Events\XeroWebhookReceived;
 use Peoplelogy\XeroBridge\Jobs\ProcessXeroWebhook;
+use Peoplelogy\XeroBridge\Models\XeroConnection;
 use Peoplelogy\XeroBridge\Models\XeroWebhookEvent;
 use Peoplelogy\XeroBridge\Support\TableGuard;
+use Peoplelogy\XeroBridge\Webhooks\WebhookEventRecorder;
 
 /**
  * Durable dedupe across Xero's 31-day replay window.
@@ -35,6 +40,19 @@ function deliver(array $events, string $entropy = 'aaa'): void
         'lastEventSequence' => count($events),
         'entropy' => $entropy,
     ]))->handle();
+}
+
+/**
+ * Spy on the log the recorder writes to.
+ *
+ * The recorder is a singleton holding the logger it was built with, so it is
+ * rebuilt after the spy is in place -- whatever resolved it earlier.
+ */
+function spyOnWebhookRecorderLog(): void
+{
+    Log::spy();
+
+    app()->forgetInstance(WebhookEventRecorder::class);
 }
 
 beforeEach(function () {
@@ -148,15 +166,155 @@ it('records only AFTER dispatching, so a crash cannot suppress an event', functi
     // dispatch suppresses that notification permanently -- and Xero will not
     // send it again once the endpoint has 200'd. Dispatching first makes the
     // worst case a duplicate, which listeners are already required to tolerate.
-    Event::listen(XeroWebhookReceived::class, function () {
-        expect(XeroWebhookEvent::count())->toBe(0);
+    $rowsSeenByListener = null;
+
+    Event::listen(XeroWebhookReceived::class, function () use (&$rowsSeenByListener) {
+        $rowsSeenByListener = XeroWebhookEvent::count();
     });
 
-    Event::fake([]);   // let the real listener above run
+    // Let the real listener above run. Not Event::fake([]), which fakes
+    // EVERY event, so the listener would never have been called.
+    Event::fakeExcept([XeroWebhookReceived::class]);
 
     deliver([replayEvent()]);
 
+    expect($rowsSeenByListener)->toBe(0)
+        ->and(XeroWebhookEvent::count())->toBe(1);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Recording can fail; the job cannot
+|--------------------------------------------------------------------------
+*/
+
+it('counts an event another worker recorded first, without a warning', function () {
+    // Two workers can both pass the check before either inserts. The unique
+    // index refuses the second row, and that is the constraint doing its job.
+    $listenerRan = false;
+
+    Event::listen(XeroWebhookReceived::class, function (XeroWebhookReceived $received) use (&$listenerRan) {
+        $listenerRan = true;
+
+        // The other worker's insert, landing between this worker's check
+        // and its own insert.
+        XeroWebhookEvent::create([
+            'dedupe_key' => $received->event->dedupeKey(),
+            'tenant_id' => $received->event->tenantId,
+            'resource_id' => $received->event->resourceId,
+            'event_type' => $received->event->eventType,
+            'event_category' => $received->event->eventCategory,
+            'event_date_utc' => $received->event->eventDateUtc,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+            'delivery_count' => 1,
+        ]);
+    });
+
+    Event::fakeExcept([XeroWebhookReceived::class]);
+    spyOnWebhookRecorderLog();
+
+    deliver([replayEvent()]);
+
+    expect($listenerRan)->toBeTrue()
+        ->and(XeroWebhookEvent::sole()->delivery_count)->toBe(2);
+
+    Log::shouldNotHaveReceived('warning');
+});
+
+it('never fails the job when the table cannot take the row', function () {
+    // The listeners have already run. Throwing here failed the job, and every
+    // retry dispatched the event again while the rest of the envelope waited
+    // -- then went down with the job once its last attempt failed.
+    Schema::create('broken_webhook_events', function (Blueprint $table) {
+        $table->id();
+    });
+
+    config()->set('xero-bridge.webhooks.dedupe.table', 'broken_webhook_events');
+    app(TableGuard::class)->flush();
+    spyOnWebhookRecorderLog();
+
+    deliver([replayEvent(), replayEvent(['resourceId' => 'inv-2'])]);
+
+    Event::assertDispatchedTimes(XeroWebhookReceived::class, 2);
+
+    Log::shouldHaveReceived('warning')->twice()->withArgs(
+        fn (string $message, array $context = []): bool => $message === 'xero-bridge: could not record a dispatched webhook event.',
+    );
+});
+
+it('logs an insert that failed for a reason other than a duplicate', function () {
+    // A column a host added without a default. SQLite and MySQL report it
+    // with SQLSTATE 23000 -- the same code as a duplicate key -- so reading
+    // the code counted it as a redelivery, recorded nothing, and said
+    // nothing.
+    Schema::create('strict_webhook_events', function (Blueprint $table) {
+        $table->id();
+        $table->string('dedupe_key', 64)->unique();
+        $table->string('tenant_id');
+        $table->string('resource_id');
+        $table->string('event_type');
+        $table->string('event_category');
+        $table->string('event_date_utc');
+        $table->timestamp('first_seen_at');
+        $table->timestamp('last_seen_at');
+        $table->unsignedInteger('delivery_count');
+        $table->string('added_by_the_host');
+    });
+
+    config()->set('xero-bridge.webhooks.dedupe.table', 'strict_webhook_events');
+    app(TableGuard::class)->flush();
+    spyOnWebhookRecorderLog();
+
+    deliver([replayEvent()]);
+
+    Event::assertDispatchedTimes(XeroWebhookReceived::class, 1);
+    expect(XeroWebhookEvent::count())->toBe(0);
+
+    Log::shouldHaveReceived('warning')->once()->withArgs(
+        fn (string $message, array $context = []): bool => $message === 'xero-bridge: could not record a dispatched webhook event.'
+            && str_contains($context['exception'], 'NOT NULL'),
+    );
+});
+
+/*
+|--------------------------------------------------------------------------
+| Organisations with no stored connection (webhooks.unknown_tenants)
+|--------------------------------------------------------------------------
+*/
+
+it('does not record an event it ignored', function () {
+    // A row means "dispatched". Recording an ignored event would suppress it
+    // for good once the organisation is connected and Xero replays it.
+    config()->set('xero-bridge.webhooks.unknown_tenants', 'ignore');
+
+    deliver([replayEvent()]);
+
+    Event::assertNotDispatched(XeroWebhookReceived::class);
+    expect(XeroWebhookEvent::count())->toBe(0);
+
+    connection(); // tenant-1 connects
+
+    deliver([replayEvent()]);
+
+    Event::assertDispatchedTimes(XeroWebhookReceived::class, 1);
     expect(XeroWebhookEvent::count())->toBe(1);
+});
+
+it('does not count a redelivery of an event it ignored', function () {
+    // Recorded while the organisation was still connected here, then
+    // forgotten. Its replays are skipped before the table is consulted, so
+    // delivery_count keeps describing what listeners actually received.
+    connection();
+    deliver([replayEvent()]);
+    XeroConnection::query()->delete();
+
+    config()->set('xero-bridge.webhooks.unknown_tenants', 'ignore');
+
+    deliver([replayEvent()], 'replayed-after-forget');
+
+    expect(XeroWebhookEvent::sole()->delivery_count)->toBe(1);
+    Event::assertDispatchedTimes(XeroWebhookReceived::class, 1);
 });
 
 /*

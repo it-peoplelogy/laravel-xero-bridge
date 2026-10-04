@@ -47,6 +47,22 @@ function draft(): array
     ];
 }
 
+/** The account code on the Nth payment sent, counting payments only. */
+function sentPaymentAccountCode(int $index = 0): ?string
+{
+    $codes = [];
+
+    Http::assertSent(function (Request $r) use (&$codes) {
+        if ($r->method() === 'POST' && str_ends_with(parse_url($r->url(), PHP_URL_PATH) ?: '', '/Payments')) {
+            $codes[] = $r->data()['Payments'][0]['Account']['Code'] ?? null;
+        }
+
+        return true;
+    });
+
+    return $codes[$index] ?? null;
+}
+
 it('applies an override even when the resource was already resolved', function () {
     // Resolve and use the memoised instance first.
     XeroBridge::invoices()->create(draft());
@@ -90,4 +106,47 @@ it('returns a fresh instance when an override is in play', function () {
     $overridden = XeroBridge::withDefaults(['account_code' => '4000'])->invoices();
 
     expect($overridden)->not->toBe(XeroBridge::invoices());
+});
+
+/*
+| The same two directions for payments(), whose payment_account_code is read
+| from the same defaults. The docs said for years that this override was
+| ignored once payments() had been resolved; these pin what the code does.
+*/
+
+it('applies a payment account override even when payments() was already resolved', function () {
+    // Resolve and use the memoised instance first.
+    XeroBridge::payments()->createForInvoice('inv-0', 50, '091');
+
+    XeroBridge::withDefaults(['payment_account_code' => '090'])->payments()->createForInvoice('inv-1', 100);
+
+    expect(sentPaymentAccountCode(0))->toBe('091')
+        ->and(sentPaymentAccountCode(1))->toBe('090');
+});
+
+it('does not leak a payment account override into a later plain payments() call', function () {
+    XeroBridge::withDefaults(['payment_account_code' => '090'])->payments()->createForInvoice('inv-1', 100);
+    expect(sentPaymentAccountCode(0))->toBe('090');
+
+    // Neither the shipped config nor this suite sets payment_account_code, so
+    // a plain call has nothing to fall back on -- unless the override leaked.
+    expect(fn () => XeroBridge::payments()->createForInvoice('inv-2', 100))
+        ->toThrow(InvalidArgumentException::class, 'paymentAccounts');
+});
+
+it('applies an override to every resource taken from a held clone', function () {
+    // The plain instances exist first, so a clone served from the memo would
+    // send their defaults instead.
+    XeroBridge::invoices();
+    XeroBridge::payments();
+
+    $xero = XeroBridge::withDefaults(['account_code' => '4000', 'payment_account_code' => '090']);
+
+    $xero->invoices()->create(draft());
+    $xero->invoices()->create(draft());
+    $xero->payments()->createForInvoice('inv-1', 100);
+
+    expect(sentAccountCode(0))->toBe('4000')
+        ->and(sentAccountCode(1))->toBe('4000')
+        ->and(sentPaymentAccountCode(0))->toBe('090');
 });

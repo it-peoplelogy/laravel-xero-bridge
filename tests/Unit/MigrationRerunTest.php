@@ -18,12 +18,14 @@ use Illuminate\Support\Facades\Schema;
  * through, with some tables created and some not.
  *
  * That is not hypothetical; it is what happened on the first deployment of
- * v1.4.2. The guard in each stub makes a second run a no-op, so the fix for
- * anyone who hits it is simply to run migrate again.
+ * v1.4.2. The guard in each stub makes a second run over its OWN table a
+ * no-op, so the fix for anyone who hits it is simply to run migrate again. A
+ * same-named table the package did not create is refused instead -- see
+ * MigrationForeignTableTest.
  */
 it('survives being run a second time', function () {
     // The base TestCase has already run every migration once.
-    $tables = ['xero_connections', 'xero_webhook_events', 'xero_write_records', 'xero_api_calls'];
+    $tables = ['xero_connections', 'xero_webhook_events', 'xero_write_records', 'xero_api_calls', 'myinvois_validations'];
 
     foreach ($tables as $table) {
         expect(Schema::hasTable($table))->toBeTrue("{$table} should exist before the second run");
@@ -42,8 +44,9 @@ it('survives being run a second time', function () {
 });
 
 it('leaves an existing table untouched rather than rebuilding it', function () {
-    // Existing means done: the stub returns early, so nothing is dropped and no
-    // data is lost by a second run.
+    // Existing and ours means done, and a column the host added on top does not
+    // make the table any less ours: the stub returns early, so nothing is
+    // dropped and no data is lost by a second run.
     Schema::table('xero_api_calls', function ($table) {
         $table->string('a_host_added_column')->nullable();
     });

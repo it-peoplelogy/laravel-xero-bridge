@@ -3,8 +3,10 @@
 declare(strict_types=1);
 
 use Illuminate\Contracts\Bus\Dispatcher;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Support\Facades\Cookie;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Testing\TestResponse;
@@ -12,6 +14,15 @@ use Peoplelogy\XeroBridge\Events\XeroWebhookReceived;
 use Peoplelogy\XeroBridge\Events\XeroWebhookSignatureFailed;
 use Peoplelogy\XeroBridge\Jobs\ProcessXeroWebhook;
 use Peoplelogy\XeroBridge\Webhooks\WebhookSignature;
+
+/**
+ * A listener a host might queue so its alerting cannot slow the 401 down --
+ * which moves the failure to the push, while the queue is down.
+ */
+final class QueuedSignatureFailureListener implements ShouldQueue
+{
+    public function handle(XeroWebhookSignatureFailed $event): void {}
+}
 
 /**
  * Posts RAW bytes. postJson() would re-encode the body, which is exactly
@@ -129,6 +140,20 @@ it('rejects a hex-encoded signature', function () {
 |--------------------------------------------------------------------------
 */
 
+/**
+ * Xero's intent-to-receive probe: an EMPTY events array. Xero sends it both
+ * correctly and incorrectly signed and requires 200 and 401 respectively.
+ */
+function intentToReceiveBody(): string
+{
+    return (string) json_encode([
+        'events' => [],
+        'lastEventSequence' => 0,
+        'firstEventSequence' => 0,
+        'entropy' => 'S0m3r4Nd0mt3xt',
+    ]);
+}
+
 it('answers the intent-to-receive ping with 200 and queues nothing', function () {
     Queue::fake();
     Event::fake([XeroWebhookReceived::class]);
@@ -145,6 +170,55 @@ it('answers the intent-to-receive ping with 200 and queues nothing', function ()
 
     Queue::assertNothingPushed();
     Event::assertNotDispatched(XeroWebhookReceived::class);
+});
+
+it('answers the intent-to-receive ping with 200 even when the queue is down', function () {
+    // The ping never reaches the queue, so a dead queue cannot fail the
+    // correctly signed half of Xero's check.
+    $this->mock(Dispatcher::class)->shouldNotReceive('dispatch');
+
+    $raw = intentToReceiveBody();
+
+    postWebhook($raw, signed($raw))->assertOk();
+});
+
+it('still answers 401 when a signature-failure listener throws', function (string $raw) {
+    // The other half of Xero's check: the mis-signed probes need a 401, and a
+    // 500 fails the check as surely as a 200 would. A counter kept in a cache
+    // that is down is the realistic way a listener throws here.
+    Queue::fake();
+    Log::spy();
+    Event::listen(XeroWebhookSignatureFailed::class, fn () => throw new RuntimeException('cache store down'));
+
+    postWebhook($raw, 'not-the-signature')->assertUnauthorized();
+
+    Queue::assertNothingPushed();
+    Log::shouldHaveReceived('error')->once()->withArgs(
+        fn (string $message, array $context = []): bool => $message === 'xero-bridge: a XeroWebhookSignatureFailed listener failed; answered 401 regardless.'
+            && $context['exception'] === 'cache store down'
+            && $context['exception_class'] === RuntimeException::class,
+    );
+})->with([
+    'a delivery with events' => [eventsPayload()],
+    'the intent-to-receive probe' => [intentToReceiveBody()],
+]);
+
+it('still answers 401 when a queued signature-failure listener cannot be queued', function () {
+    // A queued listener is pushed DURING the request, so a queue that is down
+    // throws here. The jobs table is missing, which is what a dead database
+    // queue looks like from inside the request.
+    config()->set('queue.connections.webhook_queue_down', [
+        'driver' => 'database',
+        'connection' => null,
+        'table' => 'no_such_jobs_table',
+        'queue' => 'default',
+        'retry_after' => 90,
+    ]);
+    config()->set('queue.default', 'webhook_queue_down');
+
+    Event::listen(XeroWebhookSignatureFailed::class, QueuedSignatureFailureListener::class);
+
+    postWebhook(intentToReceiveBody(), 'not-the-signature')->assertUnauthorized();
 });
 
 it('returns no cookies at all', function () {
@@ -210,6 +284,8 @@ it('fires one event per item, in order, when the job runs', function () {
 });
 
 it('returns 500 when the job cannot be queued so Xero retries', function () {
+    Log::spy();
+
     $this->mock(Dispatcher::class)
         ->shouldReceive('dispatch')
         ->andThrow(new RuntimeException('queue down'));
@@ -217,6 +293,31 @@ it('returns 500 when the job cannot be queued so Xero retries', function () {
     $raw = eventsPayload();
 
     postWebhook($raw, signed($raw))->assertStatus(500);
+
+    Log::shouldHaveReceived('error')->once()->withArgs(
+        fn (string $message, array $context = []): bool => $message === 'xero-bridge: could not queue a Xero webhook, '
+            .'or (on the sync driver) a listener failed while processing it.'
+            && $context['exception'] === 'queue down'
+            && $context['exception_class'] === RuntimeException::class,
+    );
+});
+
+it('returns 500 when a listener throws on the sync driver, so Xero retries', function () {
+    // No Queue::fake(): the suite's queue is sync, so the job -- and every
+    // listener -- runs inside the request, and a listener's exception is the
+    // response. A 500 is the right answer, since Xero then retries.
+    Event::listen(XeroWebhookReceived::class, fn () => throw new RuntimeException('listener failed'));
+    Log::spy();
+
+    $raw = eventsPayload(1);
+
+    postWebhook($raw, signed($raw))->assertStatus(500);
+
+    Log::shouldHaveReceived('error')->once()->withArgs(
+        fn (string $message, array $context = []): bool => str_contains($message, 'on the sync driver')
+            && $context['exception'] === 'listener failed'
+            && $context['exception_class'] === RuntimeException::class,
+    );
 });
 
 it('returns 200 for a signed body that is not JSON', function () {

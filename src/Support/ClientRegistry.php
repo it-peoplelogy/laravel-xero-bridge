@@ -60,7 +60,11 @@ final class ClientRegistry
         return $this->resources[$key][$class] ??= $factory();
     }
 
-    /** Drop everything -- used by tests and after a reconnect. */
+    /**
+     * Drop everything. Used by tests; nothing in the package calls it, so in a
+     * long-lived process (a queue worker, Octane) memoised resources -- and the
+     * connection defaults baked into them -- last until the process ends.
+     */
     public function flush(): void
     {
         $this->clients = [];

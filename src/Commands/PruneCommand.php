@@ -6,17 +6,19 @@ namespace Peoplelogy\XeroBridge\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\Schema;
 use Peoplelogy\XeroBridge\Models\XeroApiCall;
 use Peoplelogy\XeroBridge\Models\XeroWebhookEvent;
 use Peoplelogy\XeroBridge\Models\XeroWriteRecord;
 use Peoplelogy\XeroBridge\MyInvois\Models\MyInvoisValidation;
-use Peoplelogy\XeroBridge\Support\TableGuard;
+use Peoplelogy\XeroBridge\Support\Diagnostics;
+use Symfony\Component\Console\Output\OutputInterface;
 use Throwable;
 
 /**
  * Trims the package's own tables.
  *
- * One entry point for all three, so a host schedules a single command rather
+ * One entry point for all four, so a host schedules a single command rather
  * than remembering which features it switched on.
  *
  * Exit codes are distinct so this can be wired to monitoring:
@@ -32,7 +34,7 @@ class PruneCommand extends Command
 
     public const EXIT_STUCK_CLAIMS = 1;
 
-    public function handle(TableGuard $tables): int
+    public function handle(): int
     {
         $dryRun = (bool) $this->option('dry-run');
 
@@ -41,56 +43,113 @@ class PruneCommand extends Command
         }
 
         $this->prune(
-            $tables,
             'webhook replay records',
             config('xero-bridge.database.connection'),
             (string) config('xero-bridge.webhooks.dedupe.table', 'xero_webhook_events'),
+            'xero-bridge-migrations',
             new XeroWebhookEvent,
             $dryRun,
+            ['dedupe_key', 'delivery_count', 'first_seen_at'],
+            'XERO_WEBHOOK_DEDUPE_TABLE',
         );
 
-        $this->prune(
-            $tables,
+        $ledger = $this->prune(
             'write ledger entries',
             config('xero-bridge.database.connection'),
             (string) config('xero-bridge.writes.table', 'xero_write_records'),
+            'xero-bridge-migrations',
             new XeroWriteRecord,
             $dryRun,
+            ['claim_key', 'connection_key', 'claimed_at'],
+            'XERO_WRITES_TABLE',
         );
 
         $this->prune(
-            $tables,
             'captured API calls',
             config('xero-bridge.database.connection'),
             (string) config('xero-bridge.capture.table', 'xero_api_calls'),
+            'xero-bridge-migrations',
             new XeroApiCall,
             $dryRun,
+            ['logical_call_id', 'channel', 'created_at'],
+            'XERO_CAPTURE_TABLE',
         );
 
         $this->prune(
-            $tables,
             'MyInvois verdicts',
             config('myinvois.database.connection'),
             (string) config('myinvois.audit.table', 'myinvois_validations'),
+            'myinvois-migrations',
             new MyInvoisValidation,
             $dryRun,
+            ['subject_hash', 'tin_last4', 'last_checked_at'],
+            'MYINVOIS_AUDIT_TABLE',
         );
 
-        return $this->reportStuckClaims($tables);
+        return $ledger ? $this->reportStuckClaims() : self::SUCCESS;
     }
 
+    /**
+     * @param  string  $publishTag  the tag whose migration creates this table
+     * @param  list<string>  $ownColumns  columns only the package's own table has,
+     *                                    including the one prunable() filters on
+     * @param  string  $envKey  the setting that names the table
+     * @return bool whether the table is there to prune
+     */
     private function prune(
-        TableGuard $tables,
         string $label,
         ?string $connection,
         string $table,
+        string $publishTag,
         object $model,
         bool $dryRun,
-    ): void {
+        array $ownColumns,
+        string $envKey,
+    ): bool {
         // Absent tables are skipped in silence: a host that never switched a
-        // feature on should not be told off by a scheduled command.
-        if (! $tables->has($connection, $table, 'xero-bridge-migrations')) {
-            return;
+        // feature on should not be told off by a scheduled command. Not on
+        // screen, and not in the log either -- which is why this asks the
+        // schema itself rather than TableGuard, which logs every absent table
+        // it meets and would write one line per table on every run. Only -v
+        // names them, with the tag that creates each.
+        try {
+            $present = Schema::connection($connection)->hasTable($table);
+        } catch (Throwable $e) {
+            // Not a feature left off, so not silent.
+            $this->components->error("Could not check for the {$label} table [{$table}]: ".$e->getMessage());
+
+            return false;
+        }
+
+        if (! $present) {
+            $this->components->twoColumnDetail(
+                $label,
+                "not migrated (--tag={$publishTag})",
+                OutputInterface::VERBOSITY_VERBOSE,
+            );
+
+            return false;
+        }
+
+        // A table by this name that is not the package's -- a host's own
+        // xero_api_calls, say -- must never be pruned: prunable() filters on
+        // nothing but age, so it would delete the host's old rows every night.
+        // Up to 1.4.x it did, whether or not the feature was even on.
+        try {
+            $ours = Schema::connection($connection)->hasColumns($table, $ownColumns);
+        } catch (Throwable $e) {
+            $this->components->error("Could not check the {$label} table [{$table}]: ".$e->getMessage());
+
+            return false;
+        }
+
+        if (! $ours) {
+            $this->components->error(
+                "The table [{$table}] is not the package's {$label} table (it has no ".implode(', ', $ownColumns)
+                ." columns), so nothing in it was pruned. If it is yours, set {$envKey} to an unused name."
+            );
+
+            return false;
         }
 
         try {
@@ -102,13 +161,13 @@ class PruneCommand extends Command
             if ($count === 0) {
                 $this->components->twoColumnDetail($label, 'nothing to prune');
 
-                return;
+                return true;
             }
 
             if ($dryRun) {
                 $this->components->twoColumnDetail($label, "would delete {$count}");
 
-                return;
+                return true;
             }
 
             // Chunked, because a first prune over a year of rows in one
@@ -124,21 +183,20 @@ class PruneCommand extends Command
         } catch (Throwable $e) {
             $this->components->error("Could not prune {$label}: ".$e->getMessage());
         }
+
+        return true;
     }
 
     /**
      * A pending write claim is never pruned, so it accumulates until somebody
      * looks. That is deliberate -- it means "we sent something to Xero and
      * never learned the outcome", which is exactly the thing worth a human.
+     *
+     * Asked only once prune() has found the ledger table, so a host without
+     * one is not told anything twice -- or at all.
      */
-    private function reportStuckClaims(TableGuard $tables): int
+    private function reportStuckClaims(): int
     {
-        $table = (string) config('xero-bridge.writes.table', 'xero_write_records');
-
-        if (! $tables->has(config('xero-bridge.database.connection'), $table, 'xero-bridge-migrations')) {
-            return self::SUCCESS;
-        }
-
         try {
             $stuck = XeroWriteRecord::query()->stuck()->count();
         } catch (Throwable) {
@@ -150,13 +208,7 @@ class PruneCommand extends Command
         }
 
         $this->newLine();
-        $this->components->warn(sprintf(
-            '%d write claim(s) have been pending for over an hour. Each means something was sent to '
-            .'Xero and the outcome was never recorded, so further writes for those records are '
-            .'BLOCKED. Check Xero, then resolve the rows by hand -- nothing will re-send on its own, '
-            .'because re-sending could duplicate a record that already exists.',
-            $stuck,
-        ));
+        $this->components->warn(Diagnostics::stuckClaims($stuck));
 
         return self::EXIT_STUCK_CLAIMS;
     }

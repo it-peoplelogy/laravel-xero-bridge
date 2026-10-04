@@ -2,8 +2,12 @@
 
 declare(strict_types=1);
 
+use Illuminate\Routing\Exceptions\UrlGenerationException;
+use Illuminate\Support\Facades\Exceptions;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Testing\TestResponse;
 use Peoplelogy\XeroBridge\Models\XeroConnection;
 use Peoplelogy\XeroBridge\XeroBridgeManager;
 
@@ -21,7 +25,8 @@ afterEach(function () {
     XeroBridgeManager::redirectAfterConnectUsing(fn () => null);
 });
 
-function completeConnectFlow(): void
+/** Runs connect and a successful callback; returns the callback's response. */
+function completeConnectFlow(): TestResponse
 {
     $response = test()->get('/xero/connect/default');
     parse_str((string) parse_url($response->headers->get('Location'), PHP_URL_QUERY), $query);
@@ -41,7 +46,7 @@ function completeConnectFlow(): void
         ]]),
     ]);
 
-    test()->get("/xero/callback?code=the-code&state={$query['state']}");
+    return test()->get("/xero/callback?code=the-code&state={$query['state']}");
 }
 
 it('sends the user where the registered callback says', function () {
@@ -117,4 +122,105 @@ it('also applies on the failure path', function () {
     $this->get('/xero/callback?code=x&state=forged')->assertRedirect('/failed');
 
     expect(Route::has('xero-bridge.callback'))->toBeTrue();
+});
+
+it('still redirects with the success message when the callback throws', function () {
+    // The hook is host code, run after the row is committed. If it throws, the
+    // administrator lands on the configured destination with the message --
+    // not on a 500 for a connection that worked.
+    Exceptions::fake();
+    Log::spy();
+    config()->set('xero-bridge.routes.after_connect_redirect', '/from-config');
+
+    XeroBridgeManager::redirectAfterConnectUsing(function () {
+        throw new RuntimeException('hook broke');
+    });
+
+    completeConnectFlow()
+        ->assertRedirect('/from-config')
+        ->assertSessionHas('xero-bridge.status');
+
+    expect(session('xero-bridge.status'))->toContain('Acme Sdn Bhd')
+        ->and(XeroConnection::count())->toBe(1);
+
+    Exceptions::assertReported(fn (RuntimeException $e) => $e->getMessage() === 'hook broke');
+
+    Log::shouldHaveReceived('error')
+        ->once()
+        ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'redirectAfterConnectUsing() callback failed')
+            && ($context['connection'] ?? null) === 'default');
+});
+
+it('still shows the failure message when the callback throws on the failure path', function () {
+    Exceptions::fake();
+    config()->set('xero-bridge.routes.after_connect_redirect', '/from-config');
+
+    XeroBridgeManager::redirectAfterConnectUsing(function () {
+        throw new RuntimeException('hook broke');
+    });
+
+    $this->get('/xero/callback?code=x&state=forged')
+        ->assertRedirect('/from-config')
+        ->assertSessionHas('xero-bridge.error');
+
+    Exceptions::assertReported(RuntimeException::class);
+});
+
+/*
+|--------------------------------------------------------------------------
+| routes.after_connect_route
+|--------------------------------------------------------------------------
+*/
+
+/** A named route registered after boot, as Route::has() then needs it. */
+function afterConnectRoute(string $uri, string $name): void
+{
+    Route::get($uri, fn () => 'connected')->name($name);
+    app('router')->getRoutes()->refreshNameLookups();
+}
+
+it('sends the user to the named route when it exists', function () {
+    afterConnectRoute('accounting/connected', 'accounting.connected');
+    config()->set('xero-bridge.routes.after_connect_route', 'accounting.connected');
+    config()->set('xero-bridge.routes.after_connect_redirect', '/from-config');
+
+    completeConnectFlow()->assertRedirect(route('accounting.connected'));
+});
+
+it('falls back to the configured path when the named route needs parameters', function () {
+    // route() cannot build such a route without them and throws -- after the
+    // connection is stored, which the class promises never becomes a 500.
+    Exceptions::fake();
+    Log::spy();
+    afterConnectRoute('accounting/{organisation}/connected', 'accounting.connected');
+    config()->set('xero-bridge.routes.after_connect_route', 'accounting.connected');
+    config()->set('xero-bridge.routes.after_connect_redirect', '/from-config');
+
+    completeConnectFlow()
+        ->assertRedirect('/from-config')
+        ->assertSessionHas('xero-bridge.status');
+
+    expect(session('xero-bridge.status'))->toContain('Acme Sdn Bhd')
+        ->and(XeroConnection::count())->toBe(1);
+
+    Exceptions::assertReported(UrlGenerationException::class);
+
+    Log::shouldHaveReceived('error')
+        ->once()
+        ->withArgs(fn (string $message, array $context = []) => str_contains($message, 'routes.after_connect_route')
+            && ($context['route'] ?? null) === 'accounting.connected'
+            && ($context['connection'] ?? null) === 'default');
+});
+
+it('still shows the failure message when the named route needs parameters', function () {
+    Exceptions::fake();
+    afterConnectRoute('accounting/{organisation}/connected', 'accounting.connected');
+    config()->set('xero-bridge.routes.after_connect_route', 'accounting.connected');
+    config()->set('xero-bridge.routes.after_connect_redirect', '/from-config');
+
+    $this->get('/xero/callback?code=x&state=forged')
+        ->assertRedirect('/from-config')
+        ->assertSessionHas('xero-bridge.error');
+
+    Exceptions::assertReported(UrlGenerationException::class);
 });

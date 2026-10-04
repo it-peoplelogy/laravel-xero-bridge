@@ -15,7 +15,7 @@ built on Laravel's own HTTP client. It owns the parts of a Xero integration that
 get subtly wrong:
 
 - the OAuth 2.0 authorisation-code flow, including CSRF state in the session
-- storing credentials, with both tokens encrypted at rest and hidden from serialisation
+- storing credentials, with both tokens encrypted at rest and kept out of `toArray()` and JSON
 - the token lifecycle: 30-minute access tokens, rotating refresh tokens, per-connection locking
 - rate limits, `Retry-After`, retries and idempotency keys
 - typed exceptions that tell you whether to fix `.env`, fix the payload, retry later, or send a human to
@@ -54,15 +54,17 @@ jobs. The constraint in `composer.json` is `php: ^8.2` with
 
 > ### ⚠️ Laravel 11 is End of Life
 >
-> Laravel 11 stopped receiving security fixes on 12 March 2026. Three advisories affect the whole 11.x
-> line — including [CVE-2026-48019](https://github.com/advisories/GHSA-5vg9-5847-vvmq), a high-severity
-> CRLF injection in the default email validation rule — and they are fixed only in 12.60.0 / 12.61.1 /
-> 13.10.0 / 13.12.0. They will not be backported, so **Composer refuses to install Laravel 11 unless you
-> disable its advisory policy.**
+> Laravel 11 receives no further security fixes, so it is supported here on a **best-effort** basis:
+> the CI legs run and pass, but they are non-blocking.
 >
-> The package installs and its tests pass on Laravel 11, and CI keeps running those legs so the
-> compatibility claim is real — but they are non-blocking. If you are on Laravel 11, upgrade to 12 or 13.
-> That is a security fix for your application, not a requirement of this package.
+> Because unpatched advisories affect the whole 11.x line, Composer may refuse a full
+> `composer update` on a Laravel 11 application. That is a signal about **your** application, not
+> about this package, and `--no-security-blocking` or `policy.advisories.block false` silence it
+> without fixing it. `composer require` makes a minimal change and usually still succeeds.
+>
+> See [Laravel's support policy](https://laravel.com/docs/releases#support-policy) for current dates
+> and versions, and upgrade when you can — that is a fix for your application, not a requirement of
+> this package.
 
 ---
 
@@ -86,6 +88,10 @@ application's `composer.json`:
 
 The repository is public, so **no authentication is required** — no SSH key, no token, no deploy key,
 and nothing to configure on a build server. Composer reads it anonymously.
+
+The source is publicly visible so Peoplelogy Group's applications can install it without credentials.
+Visibility grants no licence: the package is proprietary, and copying, modifying, distributing or using
+it outside Peoplelogy Group requires prior written permission — see [LICENSE.md](../LICENSE.md).
 
 ### 2. Require a tagged version
 
@@ -116,14 +122,46 @@ php artisan xero-bridge:install
 php artisan migrate
 ```
 
-`xero-bridge:install` publishes `config/xero-bridge.php` and the `xero_connections` migration, then
-prints every `.env` key you need, the exact redirect URI to register on the Xero app, the connect URL,
-and your webhook URL. Pass `--force` to overwrite files that already exist.
+`xero-bridge:install` publishes `config/xero-bridge.php` and the package's four migrations — for
+`xero_connections`, `xero_webhook_events`, `xero_write_records` and `xero_api_calls` — then prints every
+`.env` key you need, the exact redirect URI to register on the Xero app, the connect URL, whether the
+test console is on in this environment, and your webhook URL. Pass `--force` to overwrite files that
+already exist.
 
-It also warns when `APP_URL` is not `https`, because Xero only delivers webhooks to https on port 443.
-`tests/Feature/CommandsTest.php` asserts both the key list and that warning.
+It also warns about what would otherwise fail later and less clearly: a webhook URL that is not https
+(Xero only delivers webhooks to https on port 443, so in practice an `APP_URL` that is not), a redirect
+URI Xero would refuse, a connect route — or a switched-on console — behind nothing more than `web,auth`,
+and the need to schedule `xero-bridge:refresh-tokens` with `withoutOverlapping()` and `onOneServer()`.
+`tests/Feature/CommandsTest.php` asserts the key list and the https warning;
+`tests/Feature/InstallCommandTest.php` covers the console, connect-route, webhook and redirect-URI
+output.
 
 If you would rather publish by hand, the tags are `xero-bridge-config` and `xero-bridge-migrations`.
+The optional MyInvois module has tags of its own, `myinvois-config` and `myinvois-migrations`, which
+`xero-bridge:install` never publishes.
+
+Every table is created under a **bare** name, and your database connection adds its own prefix — see
+[Table prefixes](#table-prefixes). If a table of that name already exists and is not the one the
+migration creates, that migration stops before changing anything: it names the table, the columns it
+lacks and the variable below, is not recorded as run, and the next `migrate` resumes at it once the
+clash is resolved. So when a name is already taken, set its variable **before** migrating:
+
+| Table | Variable |
+|---|---|
+| `xero_connections` | `XERO_DB_TABLE` |
+| `xero_write_records` | `XERO_WRITES_TABLE` |
+| `xero_webhook_events` | `XERO_WEBHOOK_DEDUPE_TABLE` |
+| `xero_api_calls` | `XERO_CAPTURE_TABLE` |
+| `myinvois_validations` (MyInvois tag only) | `MYINVOIS_AUDIT_TABLE` |
+
+The package's models read the same variables at runtime, so set the variable in every environment, and
+run `php artisan config:clear` first if your configuration is cached. A migration published by 1.5.0 or
+later also leaves such a table alone when it is rolled back. `tests/Unit/MigrationForeignTableTest.php`
+pins both, for every migration.
+
+The package also ships a [test console](07-test-console.md) at `/xero/console`. It is **off** unless
+`XERO_CONSOLE_ENABLED=true` is set in the environment that should have it — in every environment,
+whatever `APP_ENV` says — and `xero-bridge:install` tells you which state it is in and why.
 
 ### 4. Developing the package and an application together
 
@@ -207,21 +245,42 @@ openid profile email offline_access accounting.invoices accounting.payments acco
 | Scope | What it unlocks |
 |---|---|
 | `offline_access` | **Mandatory.** Without it Xero issues no refresh token and the connection dies after 30 minutes. |
-| `accounting.settings` | Accounts, TaxRates, Organisation, BrandingThemes — the `settings()` resource |
-| `accounting.contacts` | Contacts |
+| `accounting.settings` | Accounts, TaxRates, Organisation, BrandingThemes — the `settings()` resource, which only reads, so `accounting.settings.read` is enough |
+| `accounting.contacts` | Contacts — `contacts()`, whose `create()`, `update()` and `firstOrCreate()` write |
 | `accounting.invoices` | Invoices, CreditNotes, Quotes, Items |
-| `accounting.payments` | Payments, Overpayments, Prepayments |
-| `accounting.attachments` | Attachments |
-| `openid profile email` | Only if you want the authorising user's identity |
+| `accounting.payments` | Payments, Overpayments, Prepayments — `payments()` |
+| `accounting.attachments` | Attachments. The package wraps none of them, so this matters only for Attachments endpoints you call through [`XeroBridge::request()`](#anything-the-package-has-not-wrapped). |
+| `openid profile email` | Nothing, in this package. They make Xero return an `id_token` describing the user who authorised, and the package discards it unread: no column stores it and no event carries it. Leave them out unless something outside this package needs them. |
 
 `XeroConfig::assertOfflineAccess()` refuses to start the flow without `offline_access`, so a missing
 refresh token fails at `/xero/connect` rather than 30 minutes after a successful-looking connect.
 
+> ### ⚠️ The default asks for more than most applications need
+>
+> It requests every scope a wrapped resource could use, plus four the package itself never uses. An
+> application that raises invoices and finds or creates the contacts on them needs only:
+>
+> ```dotenv
+> XERO_SCOPES="offline_access accounting.invoices accounting.contacts accounting.settings.read"
+> ```
+>
+> Add `accounting.payments` to record payments (`payments()`, including `createForInvoice()`), and use
+> the `.read` variant of anything you only ever read. Keep a settings scope whatever else you drop:
+> discovering account codes and tax rates needs it, and so does the test console's Demo Company write
+> guard, which reads the Organisation.
+
 > ### ⚠️ Scopes are fixed at authorisation time
 >
-> Scopes are additive and cannot be removed from an existing token without revoking it, and a connection
-> made *before* you added a scope does not gain it. **Deploy the scope change before asking anyone to
-> reconnect**, or they will have to connect twice.
+> Editing `XERO_SCOPES` changes only the **next** consent. The connect URL asks for the new set, but a
+> token refresh requests no scopes at all, so every existing connection keeps exactly what it was
+> granted.
+>
+> - **Widening** reaches a connection when it reconnects. **Deploy the scope change before asking
+>   anyone to reconnect**, or they will have to connect twice.
+> - **Narrowing** never happens by reconnecting: Xero adds consented scopes and never removes them, so
+>   the only way to shed one is to revoke the authorisation and connect again. Revoking disconnects
+>   every organisation authorised in that flow; the endpoint is in the
+>   [README's Uninstalling section](../README.md#uninstalling).
 >
 > The granted scope string is stored per connection in `xero_connections.scopes`, which is how
 > `XeroConnection::hasScope()` can tell "needs re-consent" apart from "needs a refresh".
@@ -238,7 +297,22 @@ refresh token fails at `/xero/connect` rather than 30 minutes after a successful
 
 ## Configuration
 
-Every key in `config/xero-bridge.php`, and what goes wrong if it is missing or wrong.
+Every key in `config/xero-bridge.php`, and what goes wrong if it is missing or wrong. Two optional,
+off-by-default features document their keys on their own pages: durable webhook replay dedupe in
+[Persistence](09-persistence.md), and [API call capture](10-api-capture.md). MyInvois TIN validation
+has a config file of its own, `config/myinvois.php` — see
+[MyInvois TIN validation](08-myinvois-tin-validation.md).
+
+A published `config/xero-bridge.php` receives the keys later releases add without being republished,
+and a published `config/myinvois.php` likewise. On every boot that is not served from a cached
+configuration, the package adds each key your file lacks, at any depth, with its shipped default. It
+never changes a key you have — `null`, `false`, `''` and `[]` all count as values you chose, and a list
+such as a middleware stack is one value, never topped up — and it never adds anything inside
+`connections`, which is keyed by your own connection names. The flip side: a line you **delete** comes
+back with the shipped default, so to switch something off, set it rather than removing it. A
+configuration cached before an update holds none of the new keys until it is rebuilt, so run
+`php artisan config:cache` (or `config:clear`) as on any deploy. `tests/Unit/ConfigFillTest.php` pins
+this behaviour.
 
 The three credentials deliberately have **no default**. A wrong-but-present default turns a
 misconfiguration into an opaque 401 from Xero hours later; a missing value throws
@@ -250,7 +324,7 @@ asserting the config file contains `env('XERO_CLIENT_ID')` and never `env('XERO_
 | Key | Default | What breaks if it is wrong |
 |---|---|---|
 | `XERO_CLIENT_ID` | none | Empty: `XeroConfigurationException` naming `XERO_CLIENT_ID` at `/xero/connect`. Wrong: Xero returns `unauthorized_client`, which the callback reports as "This application is not authorised by Xero." |
-| `XERO_CLIENT_SECRET` | none | Empty: `XeroConfigurationException` at token exchange. Wrong: the token request fails `invalid_client` — which looks nothing like an expired connection, so do not go hunting for one. |
+| `XERO_CLIENT_SECRET` | none | Empty: `XeroConfigurationException` naming `XERO_CLIENT_SECRET` at `/xero/connect`, before anyone is sent to Xero. Wrong: the token request fails `invalid_client` — which looks nothing like an expired connection, so do not go hunting for one. |
 | `XERO_REDIRECT_URI` | callback route URL | Not an exact match for one registered on the app: Xero refuses before your callback ever runs. `127.0.0.1` or plain http: `XeroConfigurationException` at `/xero/connect`. |
 | `XERO_SCOPES` | the granular set above | Missing `offline_access`: `XeroConfigurationException` at `/xero/connect`, and `xero-bridge:status` exits 1. A scope you never requested: `XeroScopeException` at the call site — refreshing will not help, the user must reconnect. |
 | `XERO_DEFAULT_CONNECTION` | `default` | Changing it after connections exist orphans them: `XeroBridge::invoices()` then resolves a key nothing is stored under, and the first call needing a token throws `XeroConnectionNotFoundException`. |
@@ -259,23 +333,41 @@ asserting the config file contains `env('XERO_CLIENT_ID')` and never `env('XERO_
 
 | Key | Default | What breaks if it is wrong |
 |---|---|---|
-| `XERO_ROUTES_ENABLED` | `true` | False removes `/xero/connect` and `/xero/callback`. `php artisan route:cache` bakes in whatever this was **at cache time**, so a `.env` change without `route:clear` does nothing. |
-| `XERO_ROUTES_PREFIX` | `xero` | Changes the connect, callback **and webhook** paths. Changing it after the webhook URL is registered with Xero silently breaks delivery. |
-| `XERO_ROUTES_NAME_PREFIX` | `xero-bridge.` | Route names become `<prefix>connect`, `<prefix>callback`, `<prefix>webhook`. Change it and any `route('xero-bridge.connect')` in your own code breaks. |
-| `XERO_ROUTES_MIDDLEWARE` | `web,auth` | Comma separated, parsed into an array. **The flow needs a session** — that is where the OAuth state lives. Remove `web` (or anything else that starts a session) and every callback fails with "the link expired or your session changed". Add authorisation here, e.g. `web,auth,can:manage-xero`. |
-| `XERO_AFTER_CONNECT_ROUTE` | none | A named route to redirect to after a successful connect. Ignored if the name is not registered. |
-| `XERO_AFTER_CONNECT_REDIRECT` | `/` | The raw path used when no named route is set. |
+| `XERO_ROUTES_ENABLED` | `true` | False removes `/xero/connect` and `/xero/callback`; the webhook and the test console have switches of their own. `php artisan route:cache` bakes in whatever this was **at cache time**, so a `.env` change without `route:clear` does nothing. |
+| `XERO_ROUTES_PREFIX` | `xero` | Changes the connect, callback and console paths — and the webhook's too, unless `XERO_WEBHOOK_PREFIX` gives it its own. Once the webhook URL is registered with Xero, moving it means re-entering it in the Xero app's Webhooks tab (Xero re-runs its intent-to-receive check) and rebuilding `route:cache`; until then delivery fails. |
+| `XERO_ROUTES_NAME_PREFIX` | `xero-bridge.` | Route names become `<prefix>connect`, `<prefix>callback`, `<prefix>webhook`, and `<prefix>console` with `<prefix>console.run` while the console is on. Change it and any `route('xero-bridge.connect')` in your own code breaks. |
+| `XERO_ROUTES_MIDDLEWARE` | `web,auth` | Comma separated, parsed into an array. **The flow needs a session** — that is where the OAuth state lives, and the browser comes back from Xero with cookies but no bearer token. Keep `web` (or anything else that starts a session), a session driver that persists between requests, and `SESSION_SAME_SITE=lax` rather than `strict`; otherwise every callback fails with "the link expired or your session changed". See [The flow needs a browser session](#the-flow-needs-a-browser-session). The default lets **any signed-in user** connect an organisation, or repoint an existing connection at one of their own, and `xero-bridge:install` warns about it: add authorisation here, e.g. `web,auth,can:manage-xero`. |
+| `XERO_AFTER_CONNECT_ROUTE` | none | A named route to send the user to after a connect attempt, successful or not, when neither a [`redirectAfterConnectUsing()`](#redirectafterconnectusing) closure nor a `return_to` decided. Ignored if the name is not registered. It must need no route parameters — the callback has none to give — or its URL cannot be built: that is reported and logged, and `XERO_AFTER_CONNECT_REDIRECT` is used instead. |
+| `XERO_AFTER_CONNECT_REDIRECT` | `/` | The path used when nothing above it decided. |
 | `XERO_ALLOW_RETURN_TO` | `false` | Honours `?return_to=` on the connect route. Off by default: an unvalidated redirect target on an authenticated route is an open redirect. When on, only same-host absolute paths are accepted — `//evil.test` is rejected as protocol-relative. |
+
+### Test console
+
+The full story is in [The test console](07-test-console.md).
+
+| Key | Default | What breaks if it is wrong |
+|---|---|---|
+| `XERO_CONSOLE_ENABLED` | unset — **off** | On only for a value that reads as true: `true`, `1`, `on` or `yes`. Unset, empty, `false` and anything unrecognised are off in **every** environment; `APP_ENV` plays no part. Off, the route is not registered — so guard any `route('xero-bridge.console')` with `Route::has()` — and a route cached while it was on answers 404. Where config or routes are cached, switching it on takes `config:clear` and `route:clear` (or rebuilt caches). Before 1.5.0, leaving it unset switched the console on wherever `APP_ENV` was not exactly `production`. |
+| `XERO_CONSOLE_PREFIX` | `console` | Appended to `XERO_ROUTES_PREFIX`, giving `/xero/console`. |
+| `XERO_CONSOLE_MIDDLEWARE` | `web,auth` | Comma separated. The page posts a CSRF token, so it needs a session. The default admits **any signed-in user**, and whoever gets in can read the connected organisation's invoices and contacts, force a token refresh and forget the stored connection. Narrow it wherever you switch the console on, e.g. `web,auth,can:manage-xero`. |
+| `XERO_CONSOLE_WRITABLE_ORGANISATIONS` | none | Exact organisation names the console may write into besides a Xero Demo Company, comma separated and matched case-insensitively. Anything else is somebody's real ledger. |
 
 ### Webhooks
 
 | Key | Default | What breaks if it is wrong |
 |---|---|---|
-| `XERO_WEBHOOK_KEY` | none | Unset or wrong: **every** webhook is rejected with a 401 and the signature check fails closed. `xero-bridge:status` warns when it is unset. |
+| `XERO_WEBHOOK_KEY` | none | Unset or wrong: **every** webhook is rejected with a 401 and the signature check fails closed. `xero-bridge:status` warns when it is unset while webhooks are on. |
 | `XERO_WEBHOOKS_ENABLED` | `true` | False unregisters the webhook route entirely; Xero's deliveries 404 and the subscription is disabled after 24 hours of failures. |
-| `XERO_WEBHOOK_PATH` | `webhook` | Appended to the route prefix. Changing it after registering the URL with Xero breaks delivery. |
+| `XERO_WEBHOOK_PREFIX` | none — follows `XERO_ROUTES_PREFIX` | The webhook's own prefix, in place of `XERO_ROUTES_PREFIX`: `api/v1/xero` serves it at `/api/v1/xero/webhook` while connect, callback and the console stay where they are. Unset or empty follows `XERO_ROUTES_PREFIX`, so a bare `XERO_WEBHOOK_PREFIX=` moves nothing; `/` means the site root, `/webhook`. The route keeps its name and its cookieless middleware under any prefix. Moving it means re-entering the URL in the Xero app's Webhooks tab — Xero re-runs its intent-to-receive check — and rebuilding `route:cache`. |
+| `XERO_WEBHOOK_PATH` | `webhook` | Appended to the webhook's prefix: `XERO_WEBHOOK_PREFIX` when set, otherwise `XERO_ROUTES_PREFIX`. A leading slash is trimmed rather than read as absolute, so `/webhook` still means `/xero/webhook`. Changing it after registering the URL with Xero breaks delivery until you re-enter it there. |
 | `XERO_WEBHOOK_QUEUE` | default queue | The queue the envelope job is pushed onto. |
-| `XERO_WEBHOOK_QUEUE_CONNECTION` | default connection | Set this to something durable. On `sync` the controller processes inline and can blow Xero's 5-second budget. |
+| `XERO_WEBHOOK_QUEUE_CONNECTION` | default connection | Set this to something durable. On `sync` — set here, or `QUEUE_CONNECTION` while this is unset — the job runs inside the request: listener time counts against Xero's 5-second budget, and a listener that throws turns the response into a 500, so Xero redelivers the whole envelope and the listeners that had succeeded run again, unless replay dedupe recorded them. |
+| `XERO_WEBHOOK_UNIQUE_FOR` | `900` | Seconds, at least 60. A redelivery of the same events, while their job is still queued, waiting to retry or running, is answered 200 without being queued again — or 503, so Xero retries later, if it arrives before the first delivery is confirmed queued; see [When Xero retries a delivery](04-webhooks-and-events.md#when-xero-retries-a-delivery). The lock that does it is released when the job finishes or its last attempt fails, so this is only the ceiling for a job whose worker died. The lock lives in the store `XERO_LOCK_STORE` names, or the default cache store while that is unset. |
+| `XERO_WEBHOOK_TRIES` | `5` | Attempts for the envelope job, including the first, with backoff of 10s, 30s, 2m and 10m. With `1` a failing listener gets no retry, and the event it failed on and every event after it in that envelope are lost. |
+| `XERO_WEBHOOK_UNKNOWN_TENANTS` | `dispatch` | Events for an organisation with no stored connection here. Xero sends events for every organisation connected to the Xero app — one connected from another environment, or one forgotten here but never disconnected at Xero. `dispatch` fires `XeroWebhookReceived` for them like any other, as every release before 1.5.0 did, so each listener decides — for example with `$event->connection()`. `ignore` skips them before any listener runs: they are neither dispatched nor recorded. Under `ignore` an invalidated connection still counts as known, App Store (`APPLICATION`) events are never skipped, and an event whose lookup fails is dispatched rather than lost. Any other value means `dispatch`. The worker reads it, so after changing it run `config:clear` (or re-cache) and `queue:restart`. |
+
+Durable replay dedupe — `XERO_WEBHOOK_DEDUPE`, `XERO_WEBHOOK_DEDUPE_TABLE` and
+`XERO_WEBHOOK_DEDUPE_RETAIN_DAYS` — is covered in [Persistence](09-persistence.md).
 
 ### HTTP client
 
@@ -295,7 +387,7 @@ asserting the config file contains `env('XERO_CLIENT_ID')` and never `env('XERO_
 
 | Key | Default | What breaks if it is wrong |
 |---|---|---|
-| `XERO_LOCK_STORE` | default cache store | **Set this.** The refresh is wrapped in a per-connection cache lock, and `array` and `file` give no cross-process guarantee — two workers then refresh concurrently and each invalidates the other's rotating refresh token, killing the connection. Use redis, memcached or database. `xero-bridge:status` warns only when this is unset **and** `cache.default` is `array` or `file` — naming a bad store explicitly buys silence, not a lock. |
+| `XERO_LOCK_STORE` | default cache store | **Set this.** Every token refresh runs inside a per-connection lock in this store, and so does the webhook job's retry lock (`XERO_WEBHOOK_UNIQUE_FOR`). `array` locks only inside one process and `file` only within one server, so with the scheduler, queue workers or web servers on more than one server, two refreshes can each invalidate the other's rotating refresh token — killing the connection — and a redelivered webhook can be queued twice. Use redis, memcached or database; leave it unset or blank for the default store. The store must hold plain cache entries as well as locks — the webhook controller keeps a "queued" marker beside each lock — so a `database` store needs Laravel's `cache` table, not only `cache_locks`; without it every webhook delivery logs a warning and a retry during a held lock is answered 503 and queued again later. `xero-bridge:status` judges the store by its **class**, never its name: an array store, or a file store that is only the default, is a warning; a file store named here is a note, which `--strict` does not count; a store that cannot lock, the null store, or a name that is not defined does not pass the lock pre-flight, which `--strict` does count. |
 | `XERO_REFRESH_LEEWAY` | `60` | Seconds before expiry at which a token is treated as stale. Zero means a token can expire mid-flight. |
 | `XERO_LOCK_TTL` | `10` | Seconds a holder may hold the lock. |
 | `XERO_LOCK_WAIT` | `12` | Seconds a waiter will wait. |
@@ -310,10 +402,23 @@ asserting the config file contains `env('XERO_CLIENT_ID')` and never `env('XERO_
 
 | Key | Default | What breaks if it is wrong |
 |---|---|---|
-| `XERO_DB_CONNECTION` | default connection | Which database connection holds `xero_connections`. Point it somewhere the migration has not run and every call throws a `QueryException`. |
-| `XERO_DB_TABLE` | `xero_connections` | A **bare** name — see [Table prefixes](#table-prefixes). |
-| `XERO_ON_KEY_CONFLICT` | `replace` | The key exists but points at a different organisation. `replace` treats the key as an app-side slot and repoints it; `error` refuses with `ConnectionKeyConflictException` and tells the user to disconnect the old organisation first. |
-| `XERO_ON_TENANT_CONFLICT` | `error` | This organisation is already connected under a different key. `error` refuses with `TenantAlreadyConnectedException`; `rekey` moves the existing row to the new key. The default is `error` because silently re-keying would break every caller that already references the old key. |
+| `XERO_DB_CONNECTION` | default connection | Which database connection holds the package's four Xero tables. Point it somewhere they have not been migrated and every Xero call throws a `QueryException`, because each one reads its connection row first; `xero-bridge:status` reports the missing table and exits `1`. |
+| `XERO_DB_TABLE` | `xero_connections` | A **bare** name — see [Table prefixes](#table-prefixes). Set it **before** the first `migrate` when that name is already taken: the migration refuses a table it did not create, changes nothing, and names this variable. The model reads it at runtime too, so set it in every environment. If it names a table that is missing or not the package's own, `xero-bridge:status` says so and exits `1`. |
+| `XERO_ON_KEY_CONFLICT` | `replace` | The key exists but points at a different organisation. `replace` treats the key as an app-side slot and repoints it, overwriting the row's organisation and tokens; `error` refuses with `ConnectionKeyConflictException` and tells the user to disconnect the old organisation first. Any other value acts as `error`. |
+| `XERO_ON_TENANT_CONFLICT` | `error` | This organisation is already connected under a different key. `error` refuses with `TenantAlreadyConnectedException`; `rekey` moves the existing row to the new key — and if that key already holds a different organisation, `XERO_ON_KEY_CONFLICT` decides: `replace` deletes that row first, `error` refuses and changes nothing. Any value but `rekey` acts as `error`. The default is `error` because silently re-keying would break every caller that already references the old key. |
+
+### Write ledger
+
+Optional and off by default: durable duplicate protection for writes that name the record they belong
+to, `XeroBridge::invoices()->for($order)->create([...])`. How it works is in
+[Persistence](09-persistence.md).
+
+| Key | Default | What breaks if it is wrong |
+|---|---|---|
+| `XERO_WRITES_LEDGER` | `false` | Switches the ledger on. It needs the `xero_write_records` table migrated; until that exists, writes go out unprotected — or, with `XERO_WRITES_STRICT` on, the ones named with `for()` are refused. `xero-bridge:status` warns about a missing table and about claims stuck pending for over an hour. |
+| `XERO_WRITES_STRICT` | `false` | What a write named with `for()` does when the ledger is on but cannot record its claim — the table is missing, the database is unreachable, or the insert fails for any reason other than a duplicate. `false` logs it and sends the write **unprotected**, as every release before 1.5.0 did. `true` refuses it with `XeroWriteLedgerUnavailableException` before anything is sent, so retrying is safe. A write with no owner is never refused, and a write inside a database transaction is still only warned about. |
+| `XERO_WRITES_TABLE` | `xero_write_records` | A **bare** name. Set it before migrating if that name is already taken — see [Publish and migrate](#3-publish-and-migrate). |
+| `XERO_WRITES_RETAIN_DAYS` | `90` | Days `xero-bridge:prune` keeps a succeeded row. A pending row is never pruned, at any age: deleting it would allow the very duplicate it exists to prevent. |
 
 ### Invoice defaults
 
@@ -345,12 +450,16 @@ XERO_CLIENT_SECRET=
 XERO_REDIRECT_URI="${APP_URL}/xero/callback"
 
 # Granular scopes. offline_access is mandatory or you get no refresh token.
+# This is the shipped default, which asks for more than most applications
+# need -- see Scopes above for an invoice-only set.
 XERO_SCOPES="openid profile email offline_access accounting.invoices accounting.payments accounting.contacts accounting.settings accounting.attachments"
 
 # From the Xero app's Webhooks tab. Leave blank to reject all webhooks.
 XERO_WEBHOOK_KEY=
 
-# A cache store that locks ACROSS PROCESSES. array and file do not.
+# Holds the token-refresh and webhook-retry locks. array locks within one
+# process and file within one server; across servers, use redis, memcached
+# or database.
 XERO_LOCK_STORE=redis
 
 # --- Invoice defaults (these differ per Xero organisation) ------------------
@@ -388,6 +497,41 @@ or, for a named connection:
 The `key` segment is constrained to `[A-Za-z0-9._-]{1,64}` in `routes/web.php`, which keeps junk out of a
 unique column and out of flash messages.
 
+> ### ⚠️ Any signed-in user can connect, or repoint, an organisation
+>
+> `auth` admits every account your application has, and whoever reaches `/xero/connect/{key}` decides
+> which Xero organisation that key points at. Under the default `XERO_ON_KEY_CONFLICT=replace` that
+> includes repointing a key already in use at an organisation of their own, after which every call
+> through the key reaches their ledger. Put your own gate in `XERO_ROUTES_MIDDLEWARE`, e.g.
+> `web,auth,can:manage-xero`; `xero-bridge:install` warns for as long as the shipped `web,auth` is in
+> place.
+
+### The flow needs a browser session
+
+Connect and callback are two halves of one round trip through Xero's sign-in page. The OAuth state that
+ties them together is kept in the session, so a state value presented from any other browser is
+rejected (`tests/Feature/CallbackRouteTest.php`, "rejects a valid state presented from another
+session"). And when Xero sends the browser back to `/xero/callback`, it carries cookies and nothing
+else — no bearer token. So these two routes need:
+
+- **Session middleware** — `web`, or your own equivalent.
+- **A session driver that persists between requests.** `array` keeps nothing from the first request
+  to the second.
+- **`SESSION_SAME_SITE=lax`**, Laravel's default. `strict` withholds the session cookie on exactly this
+  request, because the redirect back to your callback comes from Xero's site.
+- **A full-page navigation** to the connect route — a link or `window.location`, not `fetch()` or an
+  XHR. Its response is a redirect to Xero's sign-in page, which the user has to see.
+
+Miss any of these and the callback cannot find its state, so it redirects with "The Xero authorisation
+could not be verified, because the link expired or your session changed."
+
+A single-page application that signs in through Sanctum's cookie-based session works as it is: set
+`XERO_ROUTES_MIDDLEWARE=web,auth:sanctum`. An application that authenticates **only** with bearer
+tokens has nothing for the returning browser to present, so a guard that reads only the token treats it
+as a guest: these two routes need `web`, and a user signed in through that session.
+[Recipes, section 8](06-recipes.md#8-connecting-from-an-spa-or-api-only-app) covers the round trip in
+more detail.
+
 ### What happens, in order
 
 1. `XeroConnectController` resolves the key (absent means the default connection) and calls
@@ -403,7 +547,10 @@ unique column and out of flash messages.
    not granted — the connection is refused with a message saying exactly that, rather than stored and
    left to die in 30 minutes.
 5. `https://api.xero.com/connections` is read to find out which organisation was authorised.
-6. The row is upserted with both tokens encrypted, and `XeroConnected` is dispatched.
+6. The row is upserted with both tokens encrypted, and `XeroConnected` is dispatched, naming who
+   completed the consent in `$event->actor` — `null` when nobody was signed in. The row is committed
+   first, so a listener that throws cannot undo the connect: its exception is reported and logged, and
+   the administrator still sees the success message.
 
 ### The `/connections` response
 
@@ -450,10 +597,18 @@ which it chose and what the alternatives were.
 php artisan xero-bridge:status
 ```
 
-Exit codes are distinct so this can be wired to monitoring: `0` everything usable, `1` configuration
-incomplete, `2` at least one connection needs re-authorising. `--json` emits a machine-readable dump, and
-a test asserts no token ever appears in it. `--strict` also returns `1` for warnings — no webhook key, no
-cross-process lock store, recent transient failures. The command never calls Xero.
+Exit codes are distinct so this can be wired to monitoring: `0` everything usable; `1` configuration
+incomplete, the connections table missing, unreadable or not the package's own, or a connection whose
+stored tokens the current `APP_KEY` cannot decrypt (shown as `unreadable` in the Token column); `2` at
+least one connection needs re-authorising. `--json` emits a machine-readable dump, and a test asserts no
+token ever appears in it. `--strict` also returns `1` for any warning, or a lock pre-flight that did not
+pass — no webhook key, an `array` lock store or a `file` one left as the unchosen default (a `file` store
+that `XERO_LOCK_STORE` names is only a note), recent transient failures, write-ledger
+claims stuck pending, a package migration recorded twice, among others;
+[Commands, errors and token lifecycle](05-commands-and-errors.md) lists every one. Warnings print even
+when nothing is connected yet. The command never calls Xero: it reads the database, config and the package's migration files in
+`database/migrations`, and takes
+and releases one cache lock to prove the lock store works.
 
 For a live round trip, read the organisation back:
 
@@ -521,8 +676,14 @@ Schedule::command('xero-bridge:refresh-tokens')
 The command takes `--connection=`, `--window=` (seconds, default 1800) and `--force`. It exits `1` on a
 transient failure with **nothing changed** and `2` when a human must reconnect. A 5xx or a timeout never
 touches the stored tokens; only a genuine `invalid_grant` marks a connection invalidated, which fires
-`ConnectionExpired` once and is cleared by reconnecting. Nothing in this package ever deletes a
-connection row. `tests/Feature/CommandsTest.php` pins all of that.
+`ConnectionExpired` once and is cleared by reconnecting. `tests/Feature/CommandsTest.php` pins the exit
+codes, that a transient failure changes nothing, and that `invalid_grant` marks the row rather than
+deleting it; `tests/Unit/TokenManagerTest.php` pins the single `ConnectionExpired`.
+
+Nothing in the token lifecycle deletes a connection row. Only two things do, both as Eloquent deletes that
+your model observers see: the test console's **Forget connection**, and a reconnect under
+`XERO_ON_TENANT_CONFLICT=rekey` with `XERO_ON_KEY_CONFLICT=replace` that moves a row onto a key another
+organisation holds — the row that held it goes.
 
 ---
 
@@ -670,8 +831,10 @@ reads the database only.
 > the model is hydrated, an activity log, `toArray()`, a JSON response, an Inertia prop or
 > `Log::info($model)` all emit the **decrypted** value.
 >
-> Both columns are in `$hidden`, which closes the serialisation half of that hole, and
-> `tests/Unit/XeroConnectionTest.php` asserts it stays closed. Do not add an activity-log trait to this
+> Both columns are in `$hidden`, which keeps them out of `toArray()` and JSON, and
+> `tests/Unit/XeroConnectionTest.php` asserts it stays that way. It does not stop PHP serialisation: a
+> queued listener for an event that carries the model writes the token ciphertext into the job payload —
+> see [Webhooks and events](04-webhooks-and-events.md). Do not add an activity-log trait to this
 > model, and do not remove `$hidden`.
 
 Useful methods on each row: `displayName()`, `isExpired(int $leeway = 0)`, `expiresWithin(int $seconds)`,
@@ -683,7 +846,8 @@ is would send a doomed request to Xero.
 
 ### defaults()
 
-The invoice defaults in force for this connection.
+The defaults in force for this connection: the invoice defaults, and a default account to record
+payments against.
 
 ```php
 public function defaults(): ConnectionDefaults
@@ -696,11 +860,12 @@ use Peoplelogy\XeroBridge\Facades\XeroBridge;
 
 $defaults = XeroBridge::connection('acme')->defaults();
 
-$defaults->accountCode();       // '4000' if the acme block sets it, else '200'
-$defaults->taxType();           // null unless XERO_TAX_TYPE is set
-$defaults->currency();          // 'MYR'
-$defaults->brandingThemeId();   // null unless configured
-$defaults->all();               // the raw array
+$defaults->accountCode();                 // '4000', from the acme block below; null when nothing sets one
+$defaults->taxType();                     // null unless XERO_TAX_TYPE is set
+$defaults->currency();                    // 'MYR'
+$defaults->brandingThemeId();             // null unless configured
+$defaults->get('payment_account_code');   // '090', from the acme block below
+$defaults->all();                         // the raw array
 ```
 
 **Returns** — a `ConnectionDefaults` value object. No HTTP request is made.
@@ -722,14 +887,40 @@ everything.
     ],
 
     'acme' => [
-        'account_code' => '4000',   // currency still inherits 'MYR'
+        'account_code' => '4000',          // currency still inherits 'MYR'
+        'payment_account_code' => '090',   // not shipped; read by payments()->createForInvoice()
     ],
 ],
 ```
 
+There is **no fallback account code**. The `'200'` that releases before 1.1.0 shipped was Xero's
+demo-company sales account and meaningless anywhere else, so it was removed: with neither
+`XERO_ACCOUNT_CODE` nor a block value, `accountCode()` is `null` and the package sends no `AccountCode`.
+
+These are the keys the package applies, and where:
+
+| Key | Applied by |
+|---|---|
+| `account_code`, `tax_type` | `invoices()->create()` and `createMany()`: `LineItems[].AccountCode` and `TaxType`, only on a line that has none of its own (a line carrying `TaxAmount` gets no `TaxType` either) |
+| `currency`, `branding_theme_id` | The same two calls: `CurrencyCode` and `BrandingThemeID`, only when the invoice has none |
+| `payment_account_code` | `payments()->createForInvoice()`, when you pass no account code. It is not in the shipped config: add it to a connection block or pass it through `withDefaults()`. With neither, `createForInvoice()` throws `InvalidArgumentException`. |
+
+Any other key in a block is carried — `get()` and `all()` return it — but nothing in the package
+applies it.
+
+> ### ⚠️ Plain calls read the connection defaults once per process
+>
+> `defaults()` reads the configuration every time it is called. The resources do not:
+> `XeroBridge::invoices()` and `payments()` are built once per connection and kept for the life of the
+> process — a queue worker, or every request under Octane — with the defaults of that moment built in.
+> A change made at runtime, such as `config()->set()` in a long-running worker or a test, reaches
+> `defaults()` and anything called through `withDefaults()`, but not a plain call on a connection this
+> process has already used. Pass the value per call, or use `withDefaults()`, which builds a fresh
+> resource every time.
+
 ### withDefaults()
 
-Overrides the invoice defaults for one expression, without touching config.
+Overrides the connection defaults for one expression, without touching config.
 
 ```php
 /** @param array<string, mixed> $overrides */
@@ -740,7 +931,7 @@ public function withDefaults(array $overrides): static
 
 | Name | Type | Default | Notes |
 |---|---|---|---|
-| `$overrides` | `array<string, mixed>` | — | Keys are `account_code`, `tax_type`, `currency`, `branding_theme_id`. |
+| `$overrides` | `array<string, mixed>` | — | The keys the package applies are `account_code`, `tax_type`, `currency`, `branding_theme_id` and `payment_account_code` — see [defaults()](#defaults). |
 
 **Request**
 
@@ -759,45 +950,72 @@ $invoice = XeroBridge::withDefaults(['account_code' => '4000'])
 Chainable with `connection()`, in either order. Like `connection()`, the scoping lives on the returned
 instance only.
 
+An override never touches the resource that plain calls share. A manager carrying overrides builds a
+fresh resource each time you ask it for one, so the override applies to that expression — or to every
+resource taken from a manager you hold in a variable — even when the plain `invoices()` or `payments()`
+was resolved first, and it never reaches a later plain call. `tests/Unit/WithDefaultsTest.php` pins both
+directions, for invoices and payments.
+
 ### redirectAfterConnectUsing()
 
-Registers a closure for where the OAuth callback should send the user, when a config value is not
-expressive enough. **Not consulted yet — see the warning below.**
+Registers a closure that decides where the OAuth callback sends the user, when a config value is not
+expressive enough — a destination that depends on which connection was made, say.
 
 ```php
 public static function redirectAfterConnectUsing(Closure $callback): void
 ```
 
-**Request** — register it in a service provider's `boot()`:
+**Parameters**
+
+| Name | Type | Default | Notes |
+|---|---|---|---|
+| `$callback` | `Closure(?XeroConnection): ?string` | — | Receives the stored `XeroConnection` after a successful connect, and `null` after a failed one. Returns the URL to send the user to, or `null` or `''` to leave it to the configured destination. |
+
+**Request** — register it once, in a service provider's `boot()`:
 
 ```php
+// app/Providers/AppServiceProvider.php
+use Peoplelogy\XeroBridge\Models\XeroConnection;
 use Peoplelogy\XeroBridge\XeroBridgeManager;
 
-XeroBridgeManager::redirectAfterConnectUsing(
-    fn () => route('settings.integrations')
-);
+public function boot(): void
+{
+    XeroBridgeManager::redirectAfterConnectUsing(
+        fn (?XeroConnection $connection) => $connection === null
+            ? null // the connect failed: let the configured destination decide
+            : route('integrations.xero.show', $connection->key),
+    );
+}
 ```
 
-**Returns** — nothing.
+**Returns** — nothing. The closure is held in a static property for the life of the process, and
+registering another replaces it.
 
 **Notes / gotchas**
 
-> ### ⚠️ The closure is stored but never read
->
-> `XeroCallbackController::destination()` does not call `XeroBridgeManager::afterConnectCallback()`, and
-> nothing else in `src/` or `tests/` does either, so registering a closure currently has no effect. Use
-> `XERO_AFTER_CONNECT_ROUTE` until that is wired up.
+The callback consults it **first**, on success and on failure alike, and has since 1.0.1 — earlier
+releases stored the closure and never called it. The full order, highest first:
+
+1. the closure;
+2. a validated `return_to`, only when `XERO_ALLOW_RETURN_TO` is on;
+3. `XERO_AFTER_CONNECT_ROUTE`, if that route is registered and its URL can be built;
+4. `XERO_AFTER_CONNECT_REDIRECT`, which defaults to `/`.
+
+Anything the closure returns other than a non-empty string passes the decision down the list. A
+closure that throws counts as one that returned nothing: the exception goes to `report()`, the package
+logs an error, and the rest of the order decides, so the administrator still lands somewhere with the
+message the outcome earned. `tests/Feature/AfterConnectRedirectTest.php` pins each of these cases.
 
 It exists as a hook rather than a config key because `php artisan config:cache` cannot serialise a
-closure. The precedence the callback actually applies is: a validated `return_to` (only when
-`XERO_ALLOW_RETURN_TO` is on), then `XERO_AFTER_CONNECT_ROUTE` if that route name is registered, then
-`XERO_AFTER_CONNECT_REDIRECT`, which defaults to `/`.
+closure.
 
 Whatever the destination, the callback flashes a message to the session under both `xero-bridge.status`
 and `status` on success, and both `xero-bridge.error` and `error` on failure — the unprefixed keys mean
 Breeze and Jetstream layouts display it without you wiring anything up. Failures are always a redirect
 with a readable message, never a 500: the person looking at the screen is an administrator connecting an
-accounting system, not a developer.
+accounting system, not a developer. The same holds for what you add to that request: a `XeroConnected`
+listener or this closure that throws, or a `XERO_AFTER_CONNECT_ROUTE` whose URL cannot be built, is
+reported and logged, and cannot turn a stored connection into an error page.
 
 ---
 
@@ -842,14 +1060,25 @@ A successful reconnect clears `invalidated_at`, `invalidated_reason`, `last_fail
 
 ## Table prefixes
 
-The migration creates the table with a **bare** name and resolves the schema builder through the
-configured connection:
+Every migration the package ships creates its table with a **bare** name and resolves the schema
+builder through the configured connection. The connections migration, abridged:
 
 ```php
 // database/migrations/create_xero_connections_table.php.stub
-$this->schema()->create($this->table(), function (Blueprint $table) {
-    // ...
-});
+public function up(): void
+{
+    if ($this->schema()->hasTable($this->table())) {
+        if (($missing = $this->missingColumns()) !== []) {
+            $this->refuse($missing); // a table this migration did not create
+        }
+
+        return; // already ours: nothing to do
+    }
+
+    $this->schema()->create($this->table(), function (Blueprint $table) {
+        // ...
+    });
+}
 
 private function schema(): Builder
 {
@@ -862,21 +1091,33 @@ private function table(): string
 }
 ```
 
-So whatever prefix your database connection sets is applied automatically. PIPS sets
-`'prefix' => 'pips_'` with `'prefix_indexes' => true` on its `mysql` connection, and the table there
-becomes `pips_xero_connections` with no configuration in this package at all.
+So whatever prefix your database connection sets is applied automatically. A connection with
+`'prefix' => 'app_'` and `'prefix_indexes' => true` gets `app_xero_connections` — and
+`app_xero_write_records`, `app_xero_webhook_events` and `app_xero_api_calls` — with no configuration in
+this package at all.
 
-**Do not put a prefix in `XERO_DB_TABLE`.** Setting it to `pips_xero_connections` on a connection that
-already prefixes produces `pips_pips_xero_connections`.
+**Do not put a prefix in `XERO_DB_TABLE`**, or in any other table variable. Setting it to
+`app_xero_connections` on a connection that already prefixes produces `app_app_xero_connections`.
 
 Indexes are deliberately left unnamed for the same reason: hand-naming them would defeat
 `prefix_indexes`.
 
+A refusal names the **physical** table, prefix included, while the variable it asks you to set takes the
+bare name. The message is a single line, wrapped here, and it begins:
+
+```text
+Table "app_xero_connections" on database connection "mysql" already exists, but it is not the table
+this migration creates (missing columns: "key", "invalidated_at", "invalidated_reason" and 12 more).
+Nothing was changed. To keep that table, give the package another one: set XERO_DB_TABLE (config key
+xero-bridge.database.table) to an unused, bare table name -- the connection adds its own prefix -- ...
+```
+
 `XeroConnection` reads the same two config values in its constructor, so a custom table or connection is
-picked up by the model as well as the migration. `tests/Unit/TablePrefixTest.php` runs the real migration
-against a prefixed connection and proves three things: `Schema::hasTable('xero_connections')` is true
-through the prefixed connection while the physical table is `pips_xero_connections`; reads and writes go
-through the prefixed connection; and `XERO_DB_TABLE` is honoured.
+picked up by the model as well as the migration; the package's other models do the same with their own
+table keys. `tests/Unit/TablePrefixTest.php` runs the real migrations against a prefixed connection and
+proves three things: `Schema::hasTable('xero_connections')` is true through the prefixed connection
+while the physical table carries the prefix; reads and writes go through the prefixed connection; and
+`XERO_DB_TABLE` is honoured.
 
 ---
 
@@ -896,7 +1137,8 @@ $creditNotes = XeroBridge::request('GET', 'CreditNotes', [], [
 // Absolute URL: reaches a different Xero API entirely.
 $employees = XeroBridge::request('GET', 'https://api.xero.com/payroll.xro/2.0/Employees');
 
-// The raw response, for PDFs and other non-JSON bodies.
+// The undecoded Response: status, headers and body (still requested as JSON; for an invoice
+// PDF use invoices()->pdf($id)).
 $response = XeroBridge::raw('GET', 'Reports/BalanceSheet');
 ```
 
@@ -914,51 +1156,27 @@ authorisation time, so add the scope and deploy before asking anyone to reconnec
 
 ## Testing your integration
 
-Your test suite should never reach Xero:
+Your test suite should never reach Xero. Three things make sure of it:
 
-```php
-use Illuminate\Support\Facades\Http;
-use Peoplelogy\XeroBridge\Models\XeroConnection;
+- **`Http::preventStrayRequests()`**, worth adding even if you fake everything: it turns an unstubbed
+  request into a loud failure instead of a live call to Xero from CI.
+- **A stored connection row with a future `expires_at`**, or the first call tries to refresh the token
+  and your fakes do not cover the identity endpoint — plus an `APP_KEY`, for the encrypted token columns.
+- **`Http::fake()` patterns that name the API path and end in `*`**, such as
+  `api.xero.com/api.xro/2.0/Invoices*`. Laravel matches the whole URL, so without the `*` a pattern
+  misses every filtered read, which carries a query string, and every lookup by id.
 
-Http::preventStrayRequests();
-
-Http::fake([
-    // Trailing * matters: Laravel matches the WHOLE url, and any filtered
-    // read carries a query string.
-    'api.xero.com/api.xro/2.0/Invoices*' => Http::response([
-        'Invoices' => [[
-            'InvoiceID' => '00000000-0000-0000-0000-0000000000d1',
-            'InvoiceNumber' => 'INV-0001',
-            'Status' => 'DRAFT',
-        ]],
-    ]),
-]);
-
-XeroConnection::create([
-    'key' => 'default',
-    'tenant_id' => '00000000-0000-0000-0000-0000000000b1',
-    'access_token' => 'placeholder-access-token',
-    'refresh_token' => 'placeholder-refresh-token',
-    'expires_at' => now()->addMinutes(30),
-    'scopes' => 'offline_access accounting.invoices',
-]);
-```
-
-You need an `APP_KEY` for the encrypted casts to work, and a connection row with a future `expires_at` —
-otherwise the first call tries to refresh and your fake will not cover the identity endpoint.
-
-`Http::preventStrayRequests()` is worth adding even if you fake everything: it turns an unstubbed request
-into a loud failure instead of a live call to Xero from CI.
+The complete harness — the connection row, the stubs, faking the email endpoint — is in
+[Recipes, section 6](06-recipes.md#6-testing-a-consuming-application), the one place it is kept.
 
 ---
 
 ## Uninstalling
 
 Removing the package is `composer remove peoplelogy/laravel-xero-bridge`, plus tidying the
-`repositories` entry you added above. If you had already run
-`xero-bridge:install` and `migrate` there is more to it — in particular, **roll the migration back
-before removing the package**, and disconnect from Xero before dropping the table, because deleting
-your stored tokens does not revoke anything on Xero's side.
+`repositories` entry you added above. If you had already run `xero-bridge:install` and `migrate` there
+is more to it: the package's tables, its published migrations and config — and, before any of that,
+disconnecting from Xero, because deleting your stored tokens does not revoke anything on Xero's side.
 
 The full procedure, including the disconnect endpoints, is in the
 [README's Uninstalling section](../README.md#uninstalling). It is kept in one place deliberately, so
@@ -973,3 +1191,6 @@ the two cannot drift.
 - [Webhooks and events](04-webhooks-and-events.md)
 - [Commands, errors and token lifecycle](05-commands-and-errors.md)
 - [Recipes](06-recipes.md)
+- [The test console](07-test-console.md) — off until `XERO_CONSOLE_ENABLED=true`; who can reach it once it
+  is on, and the write guard
+- [Persistence](09-persistence.md) — the write ledger and webhook replay dedupe

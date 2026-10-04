@@ -6,13 +6,13 @@ The [project README](../README.md) is the overview; these pages are the detail.
 
 | Page | What it covers |
 |---|---|
-| [1. Getting started](01-getting-started.md) | Installing from the private repository, configuration, every `.env` key, creating your Xero app, connecting an organisation, multiple organisations |
+| [1. Getting started](01-getting-started.md) | Installing from the GitHub repository, configuration, every `.env` key, creating your Xero app, connecting an organisation and the session it needs, multiple organisations |
 | [2. Invoices](02-invoices.md) | Every method on `invoices()`, the `InvoiceFilter` builder, connection defaults, the safety guards, paging |
 | [3. Contacts, payments and settings](03-contacts-payments-settings.md) | `contacts()`, `payments()`, `settings()` — find-or-create, applying payments, discovering account codes and tax rates |
-| [4. Webhooks and events](04-webhooks-and-events.md) | The webhook endpoint, signature verification, and the six events the package dispatches |
-| [5. Commands, errors and token lifecycle](05-commands-and-errors.md) | The three Artisan commands, scheduling token refresh, the exception hierarchy, rate limits |
+| [4. Webhooks and events](04-webhooks-and-events.md) | The webhook endpoint, signature verification, and the seven events the package dispatches |
+| [5. Commands, errors and token lifecycle](05-commands-and-errors.md) | The four Artisan commands, scheduling token refresh, the exception hierarchy, rate limits |
 | [6. Recipes](06-recipes.md) | Complete worked examples, including queued invoice creation and the payment-time buyer-details flow |
-| [7. The test console](07-test-console.md) | The page at `/xero/console` that ships with the package — turning it on and off, who can reach it, the write guard, and every action |
+| [7. The test console](07-test-console.md) | The page at `/xero/console` that ships with the package, off until you switch it on — turning it on and off, who can reach it, the write guard, and every action |
 | [8. MyInvois TIN validation](08-myinvois-tin-validation.md) | Optional, off by default: validating a Malaysian taxpayer's TIN against LHDN's MyInvois API |
 | [9. Persistence](09-persistence.md) | Optional, off by default: duplicate protection for writes, durable webhook replay dedupe, and the MyInvois verdict record |
 | [10. API call capture](10-api-capture.md) | Optional, off by default: every Xero and LHDN request and response recorded into a table your own dashboard can read, with bank details and credentials removed before the insert |
@@ -65,17 +65,27 @@ These come up repeatedly, so they are worth knowing before you write any code.
    adding `ContactPersons` with `IncludeInEmails` to the *contact*. See
    [Contacts, payments and settings](03-contacts-payments-settings.md).
 
-5. **Scopes are fixed at authorisation time.** If you add a scope, deploy it *before* anyone
-   reconnects, or they will have to connect twice. See [Getting started](01-getting-started.md).
+5. **Scopes are fixed at authorisation time.** Editing `XERO_SCOPES` changes nothing for a connection
+   that already exists. If you add a scope, deploy it *before* anyone reconnects, or they will have to
+   connect twice; removing one takes a revoke and a fresh connect. See
+   [Getting started](01-getting-started.md).
 
 6. **A MyInvois TIN check needs the BRN too.** Since 1 August 2026 LHDN validates the TIN and the
    identifier as a *pair*, so a valid TIN with a stale registration number fails exactly like a
    fabricated one. See [MyInvois TIN validation](08-myinvois-tin-validation.md).
 
-7. **The test console writes only into a Demo Company.** It appears at `/xero/console` as soon as you
-   install the package, in every environment except production. Reads run against whatever is connected,
-   but anything that writes is refused unless the organisation is disposable. See
-   [The test console](07-test-console.md).
+7. **The test console is off until you switch it on, and writes only into a Demo Company.** Set
+   `XERO_CONSOLE_ENABLED=true` in the environment that should have it — nothing else turns it on,
+   whatever `APP_ENV` says — and it appears at `/xero/console`. Behind its default `web,auth`, any
+   signed-in user can read the connected organisation's invoices and contacts and forget its
+   connection, so narrow `XERO_CONSOLE_MIDDLEWARE`. Anything that writes is refused unless the
+   organisation is disposable. See [The test console](07-test-console.md).
+
+8. **Any signed-in user can connect Xero, and the flow needs a session.** Under the default
+   `XERO_ROUTES_MIDDLEWARE=web,auth`, anyone who can sign in can connect an organisation, or repoint an
+   existing connection at one of their own — put your own gate in that list. The callback is a browser
+   redirect back from Xero, carrying cookies but no bearer token, so these routes need a session even in
+   an API-only application. See [Getting started](01-getting-started.md).
 
 ## Conventions in these pages
 

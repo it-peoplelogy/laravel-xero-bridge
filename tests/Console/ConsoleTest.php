@@ -2,8 +2,11 @@
 
 declare(strict_types=1);
 
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Encryption\Encrypter;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Route;
+use Peoplelogy\XeroBridge\Commands\StatusCommand;
 use Peoplelogy\XeroBridge\Support\Diagnostics;
 
 /*
@@ -36,7 +39,7 @@ it('never calls Xero to render the page', function () {
 });
 
 it('fills the status panels on first paint', function () {
-    // Regression for the bug this console shipped with in pips: a leftover
+    // Regression for a bug in an earlier version of this console: a leftover
     // listener for a deleted button threw before renderState(boot) ran, so
     // the panels came up empty and the boot payload was computed and thrown
     // away. Neither the dead button nor its route may come back.
@@ -103,6 +106,57 @@ it('never returns a token or the client secret from the run endpoint', function 
         ->assertJsonMissingPath('data.config.client_secret');
 });
 
+it('flags the lock store by how far its locks reach, never by its name', function () {
+    // The pill used to match the store's NAME against array and file, so it
+    // disagreed with xero-bridge:status: the null store -- which status warns
+    // about -- got none, as did a file store under any other name, while a
+    // file store XERO_LOCK_STORE chose, which status only notes, was flagged.
+    config()->set('cache.stores.none', ['driver' => 'null']);
+    config()->set('xero-bridge.tokens.lock_store', 'none');
+
+    $page = $this->get('/xero/console')->assertOk();
+
+    preg_match('~<script type="application/json" id="boot-data">(.*?)</script>~s', (string) $page->getContent(), $boot);
+
+    expect(json_decode($boot[1], true, 512, JSON_THROW_ON_ERROR)['config'])->toMatchArray([
+        'lock_store' => 'none',
+        'lock_scope' => 'none',
+        'lock_store_set' => true,
+    ]);
+
+    $page->assertDontSee("['array', 'file'].indexOf(c.lock_store)", false)
+        ->assertSee('c.lock_scope', false);
+
+    // "Re-read status" renders the panel again from the run endpoint's copy.
+    $this->postJson('/xero/console/run', ['action' => 'status'])
+        ->assertJsonPath('data.config.lock_scope', 'none')
+        ->assertJsonPath('data.config.lock_store_set', true);
+});
+
+it('marks a connection whose tokens cannot be decrypted as unreadable, never healthy', function () {
+    // An APP_KEY rotated without APP_PREVIOUS_KEYS: the token may be in date,
+    // and every call through it still fails. Red, as xero-bridge:status
+    // shows it -- the rotation is simulated by giving the encrypted cast
+    // another key once the row is saved.
+    connection();
+    Model::encryptUsing(new Encrypter(random_bytes(32), 'AES-256-CBC'));
+
+    try {
+        $page = $this->get('/xero/console')->assertOk();
+    } finally {
+        // The static encrypter outlives the test otherwise.
+        Model::encryptUsing(null);
+    }
+
+    preg_match('~<script type="application/json" id="boot-data">(.*?)</script>~s', (string) $page->getContent(), $boot);
+
+    expect(json_decode($boot[1], true, 512, JSON_THROW_ON_ERROR)['connections'][0])
+        ->toMatchArray(['key' => 'default', 'expired' => false, 'tokens_readable' => false]);
+
+    $page->assertSee('c.tokens_readable === false', false)
+        ->assertSee("pill('tokens unreadable', 'bad')", false);
+});
+
 it('cannot be broken out of by a hostile organisation name', function () {
     // tenant_name is Xero's data, not ours. The JSON_HEX_* flags on the boot
     // payload are what stop a </script> in it from closing the tag.
@@ -115,8 +169,13 @@ it('cannot be broken out of by a hostile organisation name', function () {
 
 /*
 |--------------------------------------------------------------------------
-| The environment gate, both directions
+| The gate, both directions: off unless XERO_CONSOLE_ENABLED=true
 |--------------------------------------------------------------------------
+|
+| Flipped per request: the routes were registered at boot with the console
+| on, so these prove the request-time half of the gate. What the shipped
+| default registers in the first place is tests/ConsoleUnset.
+|
 */
 
 it('404s at request time when the console is switched off', function () {
@@ -131,36 +190,92 @@ it('404s at request time when the console is switched off', function () {
     $this->postJson('/xero/console/run', ['action' => 'status'])->assertNotFound();
 });
 
-it('is off in production when nothing is configured', function () {
-    config()->set('xero-bridge.console.enabled', null);
-    $this->app['env'] = 'production';
+it('is off in every environment when nothing is configured', function (?string $value, string $env) {
+    // Before 1.5.0 an unset value meant "on unless APP_ENV is exactly
+    // production" -- so a live host on `prod`, `live` or `Production`, or a
+    // staging box cloned from an .env.example that says `local`, served the
+    // console to every signed-in user. APP_ENV no longer enters into it.
+    config()->set('xero-bridge.console.enabled', $value);
+    $this->app['env'] = $env;
 
     $this->get('/xero/console')->assertNotFound();
+    $this->postJson('/xero/console/run', ['action' => 'status'])->assertNotFound();
+})->with(function (): array {
+    $cases = [];
+
+    // '' as well as null: what a bare XERO_CONSOLE_ENABLED= copied out of an
+    // example file resolves to.
+    foreach (['unset' => null, 'empty' => ''] as $label => $value) {
+        foreach (['local', 'testing', 'staging', 'uat', 'prod', 'Production', 'production'] as $env) {
+            $cases["{$label} in {$env}"] = [$value, $env];
+        }
+    }
+
+    return $cases;
 });
 
-it('is on outside production when nothing is configured', function () {
-    config()->set('xero-bridge.console.enabled', null);
+it('fails closed on a value that does not read as true', function (string $value) {
+    // A plain (bool) cast reads every one of these as true. They reach the gate
+    // as strings from a hand-edited config or a runtime config()->set().
+    config()->set('xero-bridge.console.enabled', $value);
     $this->app['env'] = 'local';
 
+    $this->get('/xero/console')->assertNotFound();
+    $this->postJson('/xero/console/run', ['action' => 'status'])->assertNotFound();
+})->with(['false', 'off', 'no', 'nonsense']);
+
+it('is on in any environment once explicitly enabled', function (string $env) {
+    config()->set('xero-bridge.console.enabled', true);
+    $this->app['env'] = $env;
+
     $this->get('/xero/console')->assertOk();
-});
 
-it('treats an empty value as unconfigured rather than as off', function () {
-    // A bare XERO_CONSOLE_ENABLED= copied out of an example file must not
-    // silently switch the console off in local.
-    config()->set('xero-bridge.console.enabled', '');
-    $this->app['env'] = 'local';
+    // Outside `testing` Laravel stops skipping the CSRF check, so post the
+    // token the way the page itself does, in X-CSRF-TOKEN.
+    $this->withSession(['_token' => 'console-csrf'])
+        ->postJson('/xero/console/run', ['action' => 'status'], ['X-CSRF-TOKEN' => 'console-csrf'])
+        ->assertOk();
+})->with(['local', 'staging', 'production']);
 
-    $this->get('/xero/console')->assertOk();
-});
-
-it('is on in production when explicitly enabled', function () {
+it('marks the page as a production host when enabled there', function () {
     config()->set('xero-bridge.console.enabled', true);
     $this->app['env'] = 'production';
 
     $this->get('/xero/console')
         ->assertOk()
         ->assertSee('This is a production host');
+});
+
+/*
+|--------------------------------------------------------------------------
+| The healthy baseline: healthyLockStore()
+|--------------------------------------------------------------------------
+|
+| The status action reports exactly what xero-bridge:status --strict judges.
+| The suite's own `array` cache locks only inside one process, which those
+| checks rightly flag, so a test that needs a HEALTHY result starts from the
+| helper in tests/Pest.php instead.
+|
+*/
+
+it('gives status --strict a clean baseline with healthyLockStore()', function () {
+    connection();
+
+    $this->artisan('xero-bridge:status', ['--strict' => true])
+        ->assertExitCode(StatusCommand::EXIT_CONFIG_INCOMPLETE);
+
+    healthyLockStore();
+
+    $this->postJson('/xero/console/run', ['action' => 'status'])
+        ->assertOk()
+        ->assertJsonPath('data.warnings', [])
+        ->assertJsonPath('data.config.lock_store', 'database')
+        ->assertJsonPath('data.config.lock_scope', 'shared')
+        // Takes and releases a real lock, so this would fail if the table the
+        // database store locks in were missing.
+        ->assertJsonPath('data.preflight.lock.ok', true);
+
+    $this->artisan('xero-bridge:status', ['--strict' => true])->assertExitCode(0);
 });
 
 /*

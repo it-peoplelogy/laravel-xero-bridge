@@ -12,8 +12,14 @@ namespace Peoplelogy\XeroBridge\Writes;
  * directly and the three-step protocol lives in exactly one class.
  *
  * A claim with a null id is a NO-OP claim: recording is off, the table is not
- * there, or the caller named no owner. The resource behaves exactly as it did
- * before this feature existed.
+ * there, or the claim could not be recorded and writes.strict is off. The
+ * resource behaves exactly as it did before this feature existed. (A write
+ * that names no owner is still recorded, under a random key, so it holds a
+ * real claim that simply never collides.)
+ *
+ * With the ledger and writes.strict both on, an owned write never gets a no-op
+ * claim: when its claim cannot be recorded, claim() throws
+ * XeroWriteLedgerUnavailableException instead, before anything is sent.
  */
 final class WriteClaim
 {

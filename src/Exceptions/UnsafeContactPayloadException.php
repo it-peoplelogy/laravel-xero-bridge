@@ -15,6 +15,9 @@ namespace Peoplelogy\XeroBridge\Exceptions;
  * delete their contact people. It is irreversible and nobody notices for
  * weeks, which is why this is refused by default rather than merely
  * documented.
+ *
+ * The message says CHAIN, not call: withContactMutation() returns a copy, so
+ * a caller who invoked it as a statement and then hit this did call it.
  */
 class UnsafeContactPayloadException extends XeroBridgeException
 {
@@ -26,8 +29,10 @@ class UnsafeContactPayloadException extends XeroBridgeException
         return new self(
             "The invoice Contact block carries a ContactID plus [{$fields}]. Xero would apply "
             .'those fields to the contact record itself and DELETE any ContactPersons not '
-            .'included in the request. Send only ContactID, or call withContactMutation() to '
-            .'confirm you intend to update the contact.'
+            .'included in the request. Send only ContactID, or chain withContactMutation() in '
+            .'front of the call -- invoices()->withContactMutation()->create(...) -- to confirm '
+            .'you intend to update the contact. It returns a copy, so on its own line it does '
+            .'nothing.'
         );
     }
 }

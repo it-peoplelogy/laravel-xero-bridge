@@ -7,17 +7,17 @@ use Illuminate\Support\Facades\Schema;
 use Peoplelogy\XeroBridge\Models\XeroConnection;
 
 /**
- * pips sets prefix 'pips_' with prefix_indexes on its mysql connection, and
- * its models declare table names WITHOUT the prefix. A package that hardcoded
- * a prefix, or named its indexes by hand, would break there. These tests run
- * the real migration against a prefixed connection and prove the package
- * neither adds nor assumes a prefix of its own.
+ * Host applications commonly set a prefix with prefix_indexes on their database
+ * connection, and declare table names WITHOUT it. A package that hardcoded a
+ * prefix, or named its indexes by hand, would break there. These tests run the
+ * real migrations against a prefixed connection and prove the package neither
+ * adds nor assumes a prefix of its own.
  */
 beforeEach(function () {
     config()->set('database.connections.prefixed', [
         'driver' => 'sqlite',
         'database' => ':memory:',
-        'prefix' => 'pips_',
+        'prefix' => 'app_',
         'prefix_indexes' => true,
     ]);
 
@@ -41,11 +41,11 @@ it('lets the host connection apply its own prefix', function () {
     $schema = Schema::connection('prefixed');
 
     // Schema::hasTable() goes through the same prefix, so it sees the bare
-    // name; the underlying table is physically pips_xero_connections.
+    // name; the underlying table is physically app_xero_connections.
     expect($schema->hasTable('xero_connections'))->toBeTrue();
 
     $physical = DB::connection('prefixed')
-        ->select("select name from sqlite_master where type='table' and name='pips_xero_connections'");
+        ->select("select name from sqlite_master where type='table' and name='app_xero_connections'");
 
     expect($physical)->toHaveCount(1);
 });
@@ -72,7 +72,7 @@ it('prefixes every table the package ships, not just the first', function (strin
     expect($schema->hasTable($table))->toBeTrue();
 
     $physical = DB::connection('prefixed')
-        ->select("select name from sqlite_master where type='table' and name='pips_{$table}'");
+        ->select("select name from sqlite_master where type='table' and name='app_{$table}'");
 
     expect($physical)->toHaveCount(1);
 })->with([

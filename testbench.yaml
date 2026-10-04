@@ -21,12 +21,19 @@ seeders:
 # No Xero credentials here -- this file is committed. Real values for manual
 # exploration belong in workbench/.env, which is gitignored, and must only ever
 # point at a Xero DEMO COMPANY, never a client's live organisation.
+#
+# XERO_CONSOLE_ENABLED is not a secret, and the workbench exists to be poked at
+# through the test console. Without it the console is off: it switches on only
+# when this is true, whatever APP_ENV says (the skeleton's is `workbench`). The
+# test suite does not apply this env list, so it still proves the shipped,
+# console-off default.
 env:
   - APP_NAME="Xero Bridge Workbench"
   - DB_CONNECTION=sqlite
   - DB_DATABASE=":memory:"
   - QUEUE_CONNECTION=sync
   - MAIL_MAILER=log
+  - XERO_CONSOLE_ENABLED=true
 
 workbench:
   start: '/'

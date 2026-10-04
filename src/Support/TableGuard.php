@@ -16,16 +16,25 @@ use Throwable;
  * published and run deliberately -- so until somebody does that, the recorders
  * must be a silent no-op rather than a torrent of "table not found".
  *
- * Three properties matter, and each is the answer to a way this could go wrong:
+ * Four properties matter, and each is the answer to a way this could go wrong:
  *
  *   MEMOISED PER PROCESS. A `hasTable()` is a real query against the
  *   information schema. Doing it on every write would add a round trip to the
  *   hot path forever, to answer a question whose answer changes about once in
- *   the life of an application.
+ *   the life of an application. So a definitive answer, yes or no, is kept.
+ *
+ *   A FAILED CHECK IS NOT AN ANSWER. When the database cannot even be asked,
+ *   the answer is "no" for the next RETRY_AFTER seconds and the question is
+ *   put again after that. Kept for the life of the process, one blip at a
+ *   queue worker's first write would leave a worker that records nothing --
+ *   and, for the write ledger, protects nothing -- until it restarts, which
+ *   under queue:work can be days. Not kept at all, every call through an
+ *   outage would wait out a connection timeout.
  *
  *   WARNS ONCE, NOT PER CALL. A queue worker handling ten thousand webhooks
  *   would otherwise write ten thousand identical lines. A log people silence is
- *   a log that silences everything else with it.
+ *   a log that silences everything else with it. Once per table for a failed
+ *   check, however often it is retried, and once for an absent table.
  *
  *   NEVER THROWS. If the database is unreachable the answer is "no" and the
  *   caller carries on. Recording is a side benefit; it must not be able to take
@@ -33,8 +42,18 @@ use Throwable;
  */
 final class TableGuard
 {
+    /** Seconds a failed check stands as "no" before it is tried again. */
+    public const RETRY_AFTER = 60;
+
     /** @var array<string, bool> */
     private array $present = [];
+
+    /**
+     * When each failed check may be tried again, as a Unix timestamp.
+     *
+     * @var array<string, int>
+     */
+    private array $failedUntil = [];
 
     /** @var array<string, true> */
     private array $warned = [];
@@ -53,6 +72,13 @@ final class TableGuard
             return $this->present[$cacheKey];
         }
 
+        // Through the package's clock, so a test can travel past the window.
+        $now = Clock::now()->getTimestamp();
+
+        if ($now < ($this->failedUntil[$cacheKey] ?? 0)) {
+            return false;
+        }
+
         try {
             // Through the Schema facade, exactly as the migration stubs do,
             // so the host connection's prefix is applied identically in both.
@@ -60,18 +86,23 @@ final class TableGuard
         } catch (Throwable $e) {
             // An unreachable database is not this class's problem to solve, and
             // it is certainly not a reason to fail the API call in progress.
+            $this->failedUntil[$cacheKey] = $now + self::RETRY_AFTER;
+
             $this->warnOnce(
-                $cacheKey,
-                'xero-bridge: could not check for the table [{table}], so recording is off for this process.',
+                $cacheKey.'|failed',
+                'xero-bridge: could not check for the table [{table}], so recording into it is off for now; '
+                .'the check is tried again a minute later.',
                 ['table' => $table, 'exception' => $e->getMessage()],
             );
 
-            return $this->present[$cacheKey] = false;
+            return false;
         }
+
+        unset($this->failedUntil[$cacheKey]);
 
         if (! $exists) {
             $this->warnOnce(
-                $cacheKey,
+                $cacheKey.'|absent',
                 'xero-bridge: the table [{table}] does not exist, so nothing is being recorded. '
                 .'Run `php artisan vendor:publish --tag={tag}` and `php artisan migrate` to switch it on, '
                 .'or set the matching config key to false to stop this message.',
@@ -91,17 +122,18 @@ final class TableGuard
     public function flush(): void
     {
         $this->present = [];
+        $this->failedUntil = [];
         $this->warned = [];
     }
 
     /** @param array<string, mixed> $context */
-    private function warnOnce(string $cacheKey, string $message, array $context): void
+    private function warnOnce(string $warnKey, string $message, array $context): void
     {
-        if (isset($this->warned[$cacheKey])) {
+        if (isset($this->warned[$warnKey])) {
             return;
         }
 
-        $this->warned[$cacheKey] = true;
+        $this->warned[$warnKey] = true;
 
         $this->logger->warning(strtr($message, [
             '{table}' => (string) ($context['table'] ?? ''),

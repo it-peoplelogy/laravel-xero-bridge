@@ -8,6 +8,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Peoplelogy\XeroBridge\Events\ConnectionExpired;
 use Peoplelogy\XeroBridge\Events\TokenRefreshed;
 use Peoplelogy\XeroBridge\Exceptions\XeroBridgeException;
@@ -86,10 +87,9 @@ it('keeps the existing refresh token when Xero returns none', function () {
 | The regression that matters
 |--------------------------------------------------------------------------
 |
-| pips/app/Services/XeroService.php calls clearTokens() -> truncate() on ANY
-| failed refresh, so one transient 502 permanently destroys the connection and
-| needs a human with a browser to recover it. That is very likely what took
-| the integration offline in June. These tests pin the opposite behaviour.
+| An integration that clears its stored tokens on ANY failed refresh turns one
+| transient 502 into a destroyed connection that needs a human with a browser
+| to recover it. These tests pin the opposite behaviour.
 |
 */
 
@@ -264,6 +264,34 @@ it('throws rather than refreshing unlocked when the holder never finishes', func
     Http::assertNothingSent();
     Event::assertNotDispatched(ConnectionExpired::class);
     expect(XeroConnection::sole()->invalidated_at)->toBeNull();
+});
+
+it('says once that the null store cannot lock, and refreshes regardless', function () {
+    // The null store is a LockProvider, but every lock it hands out is
+    // granted at once: refreshing under one is refreshing unlocked, so it
+    // gets the same one-time warning as a store with no locks at all.
+    config()->set('cache.stores.none', ['driver' => 'null']);
+    config()->set('xero-bridge.tokens.lock_store', 'none');
+
+    Log::spy();
+    // Rebuilt with the spy: the singleton holds the logger it was made with.
+    app()->forgetInstance(TokenManager::class);
+
+    connection(['expires_at' => now()->subMinute()]);
+    fakeRefresh();
+
+    tokens()->valid();
+
+    XeroConnection::sole()->forceFill(['expires_at' => now()->subMinute()])->save();
+
+    tokens()->valid();
+
+    // Both refreshes ran, exactly as they would have under its NoLock.
+    Http::assertSentCount(2);
+
+    Log::shouldHaveReceived('warning')
+        ->withArgs(fn (string $message): bool => str_contains($message, 'cannot lock'))
+        ->once();
 });
 
 it('does not rotate again when another process already refreshed after a 401', function () {

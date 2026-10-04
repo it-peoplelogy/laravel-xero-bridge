@@ -37,8 +37,8 @@ function fakePanelMyInvois(int $status = 200): void
 */
 
 it('shows no MyInvois panel while the module is disabled', function () {
-    // The console is ON by default outside production, so anything rendered
-    // here appears in every installation. Not even a "MyInvois is off" note.
+    // Anything rendered here appears in every installation that switches the
+    // console on, Malaysian or not. Not even a "MyInvois is off" note.
     $this->get('/xero/console')
         ->assertOk()
         ->assertDontSee('MyInvois', false);

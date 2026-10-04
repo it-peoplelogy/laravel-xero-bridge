@@ -3,8 +3,9 @@
 
     Included from console.blade.php only when the module is enabled, so a
     consumer who never switches it on sees nothing at all -- not even a note
-    telling them it exists. The console is on by default outside production, so
-    a "MyInvois is off" panel would appear in every non-Malaysian installation.
+    telling them it exists. The console is off unless XERO_CONSOLE_ENABLED=true,
+    but wherever it is on, a "MyInvois is off" panel would appear in every
+    non-Malaysian installation.
 
     Every field and the Run button sit inside ONE .act block on purpose:
     collectParams() scopes to button.closest('.act'), and the Xero contact

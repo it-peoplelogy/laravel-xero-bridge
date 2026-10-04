@@ -8,6 +8,7 @@ use Illuminate\Session\Middleware\StartSession;
 use Illuminate\Support\Facades\Route;
 use Peoplelogy\XeroBridge\Http\Controllers\XeroWebhookController;
 use Peoplelogy\XeroBridge\Http\Middleware\EnsureCookielessResponse;
+use Peoplelogy\XeroBridge\Support\XeroConfig;
 
 /*
 | Registered SEPARATELY from the connect/callback routes, and deliberately
@@ -22,13 +23,14 @@ use Peoplelogy\XeroBridge\Http\Middleware\EnsureCookielessResponse;
 |
 | There is no CSRF token here either, which is correct: the HMAC signature is
 | the authentication.
+|
+| The URI is routes.prefix + webhooks.path, unless webhooks.prefix replaces
+| the first half (XeroConfig::webhookUri() holds the rule). The stack below
+| goes wherever the URI goes: under an `api/...` prefix it still gets no
+| middleware group.
 */
 
-Route::post(
-    trim((string) config('xero-bridge.routes.prefix'), '/')
-        .'/'.trim((string) config('xero-bridge.webhooks.path', 'webhook'), '/'),
-    XeroWebhookController::class
-)
+Route::post(app(XeroConfig::class)->webhookUri(), XeroWebhookController::class)
     ->middleware(EnsureCookielessResponse::class)
     ->withoutMiddleware([
         StartSession::class,

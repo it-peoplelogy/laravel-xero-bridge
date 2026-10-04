@@ -7,6 +7,7 @@ namespace Peoplelogy\XeroBridge;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Config\Repository as ConfigRepository;
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Contracts\Foundation\CachesConfiguration;
 use Illuminate\Database\ConnectionResolverInterface;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Peoplelogy\XeroBridge\Capture\ApiCallRecorder;
@@ -35,6 +36,7 @@ use Peoplelogy\XeroBridge\Writes\XeroWriteRecorder;
 use Psr\Log\LoggerInterface;
 use Spatie\LaravelPackageTools\Package;
 use Spatie\LaravelPackageTools\PackageServiceProvider;
+use Throwable;
 
 class XeroBridgeServiceProvider extends PackageServiceProvider
 {
@@ -64,6 +66,12 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
 
     public function packageRegistered(): void
     {
+        // spatie merged config/xero-bridge.php one level deep just before this
+        // ran (PackageServiceProvider::register()); this fills the levels
+        // below. `connections` is keyed by the host's own connection names, so
+        // it is never filled key by key -- see fillMissingConfig().
+        $this->fillMissingConfig('xero-bridge', __DIR__.'/../config/xero-bridge.php', opaque: ['connections']);
+
         $this->app->singleton(XeroConfig::class, fn ($app) => new XeroConfig(
             $app->make(ConfigRepository::class),
         ));
@@ -137,7 +145,10 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
                 add: (array) $config->get('xero-bridge.capture.redact.add', []),
                 keep: (array) $config->get('xero-bridge.capture.redact.keep', []),
                 placeholder: (string) $config->get('xero-bridge.capture.redact.placeholder', '[redacted]'),
-                skipUrls: (array) $config->get('xero-bridge.capture.skip_urls', []),
+                // The fallback is the pattern the config file ships, so a
+                // capture block that lost the line still never stores the
+                // OnlineInvoice capability link.
+                skipUrls: (array) $config->get('xero-bridge.capture.skip_urls', ['#/OnlineInvoice(\?|$)#i']),
                 maxDepth: (int) $config->get('xero-bridge.capture.redact.max_depth', 24),
                 maxNodes: (int) $config->get('xero-bridge.capture.redact.max_nodes', 20000),
             );
@@ -168,6 +179,7 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
             $app->make(XeroConfig::class),
             $app->make(TokenManager::class),
             $app->make(CacheFactory::class),
+            $app->make(ConnectionRepository::class),
         ));
 
         $this->app->alias(XeroBridgeManager::class, 'xero-bridge');
@@ -195,6 +207,7 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
     private function registerMyInvois(): void
     {
         $this->mergeConfigFrom(__DIR__.'/../config/myinvois.php', 'myinvois');
+        $this->fillMissingConfig('myinvois', __DIR__.'/../config/myinvois.php');
 
         $this->app->singleton(MyInvoisConfig::class, fn ($app) => new MyInvoisConfig(
             $app->make(ConfigRepository::class),
@@ -212,6 +225,109 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
             $app->make(CacheFactory::class),
             $app->make(MyInvoisAudit::class),
         ));
+    }
+
+    /**
+     * Give the application's config every key it lacks, at any depth, from the
+     * package's own file -- so that `composer update` alone delivers a setting
+     * added by a later release.
+     *
+     * mergeConfigFrom(), which runs first, merges ONE level deep. A published
+     * config/xero-bridge.php keeps its own copy of every block it has, so a key
+     * a later release adds INSIDE a block (webhooks.prefix, writes.strict)
+     * would never reach it, and the env variable documented for that key would
+     * silently do nothing. This walks the package file and adds whatever is
+     * missing.
+     *
+     * A key the application already has is never touched, whatever its value:
+     * null, false, '' and [] are all decisions. Only associative arrays are
+     * walked into. A list -- a middleware stack, skip_urls -- is one value, so a
+     * shorter list stays exactly as the host wrote it. The top-level blocks in
+     * $opaque are not walked into at all: `connections` is keyed by the host's
+     * own connection names, and a 'default' entry added under hosts that have
+     * none would hand every named connection a currency, or an account code
+     * from XERO_ACCOUNT_CODE, that it never had.
+     *
+     * Every key a published file can lack without having been edited is one a
+     * later release added, and the code reads each of those with the shipped
+     * default as its fallback. Filling one therefore changes nothing until its
+     * env variable is set. A line a host DELETED comes back with the shipped
+     * default; switching something off means setting it, not removing it.
+     *
+     * Skipped when the configuration is cached, exactly as mergeConfigFrom() is:
+     * a cache built after the update already holds the filled result, and one
+     * built before it keeps running on those fallbacks.
+     *
+     * It never throws. `composer update` runs package:discover, which boots the
+     * application, so an exception here would fail the very command that
+     * installs the release. A failure leaves the configuration as
+     * mergeConfigFrom() left it, which is how every earlier release ran.
+     *
+     * @param  list<string>  $opaque  top-level blocks never filled key by key
+     */
+    private function fillMissingConfig(string $key, string $path, array $opaque = []): void
+    {
+        if ($this->app instanceof CachesConfiguration && $this->app->configurationIsCached()) {
+            return;
+        }
+
+        try {
+            // Checked rather than caught: requiring a missing file is a fatal
+            // error, which no catch block sees.
+            if (! is_file($path)) {
+                return;
+            }
+
+            $config = $this->app->make('config');
+            $current = $config->get($key);
+            $shipped = require $path;
+
+            if (is_array($current) && is_array($shipped)) {
+                $config->set($key, self::fillMissingKeys(
+                    $current,
+                    array_diff_key($shipped, array_flip($opaque)),
+                ));
+            }
+        } catch (Throwable) {
+            // Silent on purpose. Nothing is lost -- what is left is exactly how
+            // every release before 1.5.0 ran -- and a log call made while the
+            // providers are still registering can itself be what fails.
+        }
+    }
+
+    /**
+     * The walk behind fillMissingConfig(), kept pure so it can be tested on its
+     * own: every key of $shipped that $config lacks is added, and a key $config
+     * has is kept -- walked into only when both sides are associative arrays.
+     *
+     * @internal
+     *
+     * @param  array<array-key, mixed>  $config
+     * @param  array<array-key, mixed>  $shipped
+     * @return array<array-key, mixed>
+     */
+    public static function fillMissingKeys(array $config, array $shipped): array
+    {
+        foreach ($shipped as $name => $default) {
+            if (! array_key_exists($name, $config)) {
+                $config[$name] = $default;
+            } elseif (self::isBlock($default) && self::isBlock($config[$name])) {
+                $config[$name] = self::fillMissingKeys($config[$name], $default);
+            }
+        }
+
+        return $config;
+    }
+
+    /**
+     * A block of settings, as opposed to a scalar or a list. [] counts as a
+     * list: an empty array in a published file is a value, not a gap.
+     *
+     * @phpstan-assert-if-true array<array-key, mixed> $value
+     */
+    private static function isBlock(mixed $value): bool
+    {
+        return is_array($value) && ! array_is_list($value);
     }
 
     public function packageBooted(): void

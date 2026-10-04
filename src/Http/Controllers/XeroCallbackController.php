@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Peoplelogy\XeroBridge\Http\Controllers;
 
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -13,6 +14,7 @@ use Peoplelogy\XeroBridge\Contracts\ConnectionRepository;
 use Peoplelogy\XeroBridge\Events\XeroConnected;
 use Peoplelogy\XeroBridge\Exceptions\XeroBridgeException;
 use Peoplelogy\XeroBridge\Models\XeroConnection;
+use Peoplelogy\XeroBridge\OAuth\Actor;
 use Peoplelogy\XeroBridge\OAuth\IdentityClient;
 use Peoplelogy\XeroBridge\OAuth\OAuthStateStore;
 use Peoplelogy\XeroBridge\OAuth\TenantInfo;
@@ -27,6 +29,12 @@ use Throwable;
  * Every failure here is a redirect with a readable flash message, never a 500
  * and never a stack trace in the browser: the person looking at it is usually
  * an administrator connecting an accounting system, not a developer.
+ *
+ * That holds for the host's own code too. A XeroConnected listener and the
+ * redirectAfterConnectUsing() closure both run inside this request, and
+ * either can throw; such a failure is reported to the host's exception
+ * handler and logged, and the administrator is still redirected with the
+ * outcome the connection actually had.
  */
 final class XeroCallbackController
 {
@@ -100,13 +108,77 @@ final class XeroCallbackController
             return $this->fail('Could not complete the Xero connection. Please try again.', $entry);
         }
 
-        XeroConnected::dispatch($connection, $repointed);
+        // The row is committed from here on, so nothing below may turn this
+        // into a failure page.
+        $this->announce($connection, $repointed, $this->actor($request));
 
         return $this->succeed(
             "Connected to the Xero organisation \"{$connection->displayName()}\".",
             $entry,
             $connection,
         );
+    }
+
+    /**
+     * Fire XeroConnected without letting a listener undo the outcome.
+     *
+     * The row is already committed when this runs, so a listener that throws
+     * -- an audit table that was never migrated, a notification that cannot
+     * be sent, a queued listener whose queue is down -- has not stopped the
+     * connection. Letting it out would show the administrator a 500 for a
+     * connection that worked and send them round the consent screen again for
+     * nothing. So the exception goes to the host's exception handler, as
+     * visible as any other application error, a log line ties it to the
+     * connection, and the administrator still sees the success message.
+     *
+     * As with any Laravel event, the listeners after the one that threw do
+     * not run.
+     */
+    private function announce(XeroConnection $connection, bool $repointed, ?Actor $actor): void
+    {
+        try {
+            XeroConnected::dispatch($connection, $repointed, $actor);
+        } catch (Throwable $e) {
+            report($e);
+
+            $this->logger->error('xero-bridge: a XeroConnected listener failed; the connection itself was stored.', [
+                'connection' => $connection->key,
+                'tenant_id' => $connection->tenant_id,
+                'exception' => $e->getMessage(),
+            ]);
+        }
+    }
+
+    /**
+     * Who completed the consent, for XeroConnected.
+     *
+     * Read on the callback rather than carried in the OAuth state: the state
+     * was minted into this same session, so in practice it is the user who
+     * started the flow, and the state entry keeps its shape.
+     * `$request->user()` follows the guard the `auth` middleware signed the
+     * user in with -- it calls shouldUse() -- so the default driver at this
+     * point names that guard.
+     *
+     * Who connected is worth recording, never worth failing a connection that
+     * is already stored: a guard or user provider that throws gives null.
+     */
+    private function actor(Request $request): ?Actor
+    {
+        try {
+            $user = $request->user();
+
+            if (! $user instanceof Authenticatable) {
+                return null;
+            }
+
+            return Actor::from($user, app('auth')->getDefaultDriver());
+        } catch (Throwable $e) {
+            $this->logger->warning('xero-bridge: could not resolve the signed-in user; XeroConnected carries no actor.', [
+                'exception' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
     }
 
     /**
@@ -222,19 +294,44 @@ final class XeroCallbackController
      * Precedence, highest first:
      *   1. a closure registered with XeroBridge::redirectAfterConnectUsing()
      *   2. a validated same-host ?return_to= (opt-in)
-     *   3. routes.after_connect_route, if that named route exists
+     *   3. routes.after_connect_route, if that named route exists and its URL
+     *      can be built
      *   4. routes.after_connect_redirect
      *
      * The closure comes first because it is the only option that can decide
      * per connection -- a config file cannot hold a closure once cached, which
      * is the whole reason the hook exists.
      *
+     * A closure that throws counts as one that returned nothing: it is
+     * reported and logged, and the rest of the list decides. It runs on both
+     * outcomes, and on either one the administrator should still land
+     * somewhere with the message -- after a success, not on a 500 for a
+     * connection that is already stored.
+     *
+     * The named route gets the same treatment. Route::has() only proves the
+     * name exists: a route that needs parameters makes route() throw, since
+     * this has none to give it, and the configured path decides instead.
+     *
      * @param  array{key: string, return_to: ?string}|null  $entry
      */
     private function destination(?array $entry, ?XeroConnection $connection = null): string
     {
         if (($callback = XeroBridgeManager::afterConnectCallback()) !== null) {
-            $url = $callback($connection);
+            try {
+                $url = $callback($connection);
+            } catch (Throwable $e) {
+                report($e);
+
+                $this->logger->error(
+                    'xero-bridge: the redirectAfterConnectUsing() callback failed; using the configured destination.',
+                    [
+                        'connection' => $connection->key ?? $entry['key'] ?? null,
+                        'exception' => $e->getMessage(),
+                    ],
+                );
+
+                $url = null;
+            }
 
             if (is_string($url) && $url !== '') {
                 return $url;
@@ -248,7 +345,21 @@ final class XeroCallbackController
         $named = $this->config->get('routes.after_connect_route');
 
         if (is_string($named) && $named !== '' && Route::has($named)) {
-            return route($named);
+            try {
+                return route($named);
+            } catch (Throwable $e) {
+                report($e);
+
+                $this->logger->error(
+                    'xero-bridge: could not build the URL of routes.after_connect_route (XERO_AFTER_CONNECT_ROUTE); '
+                    .'using routes.after_connect_redirect.',
+                    [
+                        'route' => $named,
+                        'connection' => $connection->key ?? $entry['key'] ?? null,
+                        'exception' => $e->getMessage(),
+                    ],
+                );
+            }
         }
 
         return (string) $this->config->get('routes.after_connect_redirect', '/');

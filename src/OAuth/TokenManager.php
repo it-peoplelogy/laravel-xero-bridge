@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Peoplelogy\XeroBridge\OAuth;
 
 use Closure;
+use Illuminate\Cache\NullStore;
 use Illuminate\Contracts\Cache\Factory as CacheFactory;
 use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Contracts\Cache\LockProvider;
@@ -36,9 +37,9 @@ use Throwable;
  *  2. Only a genuine invalid_grant is terminal. A 5xx, a timeout, or a failed
  *     save leave the stored tokens exactly as they were.
  *
- * Both exist because the host project does the opposite: XeroService calls
- * clearTokens() -> truncate() on ANY failed refresh, so one transient 502
- * destroys the connection and requires a human with a browser to recover it.
+ * Both exist because the common failure mode is the opposite: clearing the
+ * stored tokens on ANY failed refresh, so one transient 502 destroys the
+ * connection and needs a human with a browser to recover it.
  */
 final class TokenManager
 {
@@ -228,18 +229,24 @@ final class TokenManager
 
     private function lockFor(string $key): ?Lock
     {
-        $store = $this->cache->store($this->config->get('tokens.lock_store'))->getStore();
+        $store = $this->cache->store($this->config->lockStore())->getStore();
 
-        if (! $store instanceof LockProvider) {
+        // The null store counts as lock-less. It does hand out locks, but
+        // every one is granted at once and excludes nothing -- refreshing
+        // under one is refreshing unlocked, so it is said, like any other
+        // store that cannot lock. Its NoLock would behave exactly as the
+        // unlocked path below does, so nothing else changes.
+        if (! $store instanceof LockProvider || $store instanceof NullStore) {
             if (! $this->warnedAboutLocking) {
                 $this->warnedAboutLocking = true;
 
                 // Silent no-locking is how rotated refresh tokens get lost in
                 // production, so say so loudly, once.
                 $this->logger->warning(
-                    'xero-bridge: the configured cache store does not support locking, so Xero token '
-                    .'refreshes are unsynchronised. Two concurrent refreshes will invalidate each '
-                    .'other. Set XERO_LOCK_STORE to a redis, memcached or database store.'
+                    'xero-bridge: the configured cache store cannot lock -- it supports no locks, or, like '
+                    .'the null store, grants every one at once -- so Xero token refreshes are unsynchronised. '
+                    .'Two concurrent refreshes will invalidate each other. Set XERO_LOCK_STORE to a redis, '
+                    .'memcached or database store.'
                 );
             }
 

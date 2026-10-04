@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Peoplelogy\XeroBridge\Webhooks;
 
 use Carbon\CarbonImmutable;
-use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 use Peoplelogy\XeroBridge\Models\XeroWebhookEvent;
 use Peoplelogy\XeroBridge\Support\Clock;
@@ -89,6 +89,14 @@ final class WebhookEventRecorder
      *
      * On a replay this bumps delivery_count instead of inserting, which is the
      * only direct evidence available that the 31-day window is being exercised.
+     *
+     * NEVER THROWS. It runs after the listeners, so an exception here would
+     * fail a job whose listeners had already run: every retry would dispatch
+     * the event again, and the events behind it in the envelope would wait,
+     * then be lost with the job once its last attempt failed. Recording is a
+     * side benefit. A failure to record is logged, and costs only a later
+     * delivery of the same event being dispatched again, which listeners must
+     * tolerate anyway.
      */
     public function recordDispatched(WebhookEvent $event): void
     {
@@ -110,18 +118,21 @@ final class WebhookEventRecorder
                 'last_seen_at' => $now,
                 'delivery_count' => 1,
             ]);
-        } catch (QueryException $e) {
-            // A unique violation means another worker recorded the same event
-            // between our check and our insert. That is the constraint doing
-            // its job, not a failure -- count the delivery and carry on.
-            if (! $this->isUniqueViolation($e)) {
-                throw $e;
-            }
-
+        } catch (UniqueConstraintViolationException) {
+            // Another worker recorded the same event between our check and our
+            // insert. That is the constraint doing its job, not a failure --
+            // count the delivery and carry on.
+            //
+            // Laravel's own subclass, raised for a duplicate key and nothing
+            // else on every driver it ships. Not SQLSTATE 23000: on MySQL and
+            // SQLite that is every integrity violation -- NOT NULL, foreign key
+            // and CHECK too -- so a column a host added without a default would
+            // have been counted as a redelivery while the event went
+            // unrecorded, with nothing in the log.
             $this->countRedelivery($event, $now);
         } catch (Throwable $e) {
-            // Recording is a side benefit. It must never take down the queue
-            // job that was processing a real webhook.
+            // Anything else, a database error included: logged, never thrown.
+            // See the docblock.
             $this->logger->warning(
                 'xero-bridge: could not record a dispatched webhook event.',
                 ['exception' => $e->getMessage()],
@@ -144,17 +155,6 @@ final class WebhookEventRecorder
                 ['exception' => $e->getMessage()],
             );
         }
-    }
-
-    /**
-     * SQLSTATE 23000 (MySQL) and 23505 (Postgres) are integrity violations.
-     * SQLite reports 23000 through PDO as well.
-     */
-    private function isUniqueViolation(QueryException $e): bool
-    {
-        $state = (string) ($e->errorInfo[0] ?? $e->getCode());
-
-        return $state === '23000' || $state === '23505';
     }
 
     private function usable(): bool

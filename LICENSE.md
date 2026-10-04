@@ -2,8 +2,8 @@
 
 Copyright © Peoplelogy Group. All rights reserved.
 
-This software is proprietary and confidential. It is licensed for internal use within Peoplelogy Group
-and its applications only.
+This software is proprietary. It is licensed for use by Peoplelogy Group and its applications.
 
-It may not be copied, distributed, published or disclosed outside the organisation without prior
-written permission.
+The source is publicly visible so the group's applications can install it without credentials.
+Visibility grants no licence: copying, modifying, distributing or using it outside Peoplelogy Group
+requires prior written permission.

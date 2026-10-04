@@ -88,6 +88,7 @@ return [
     'routes' => [
         'enabled' => (bool) env('XERO_ROUTES_ENABLED', true),
 
+        // The webhook's prefix too, unless webhooks.prefix gives it its own.
         'prefix' => env('XERO_ROUTES_PREFIX', 'xero'),
 
         'name_prefix' => env('XERO_ROUTES_NAME_PREFIX', 'xero-bridge.'),
@@ -99,7 +100,8 @@ return [
         ))),
 
         /*
-        | Where the callback sends the user once an organisation is connected.
+        | Where the callback sends the user after a connect attempt -- the same
+        | place whether it succeeded or failed; the flash message says which.
         | A named route wins over a raw path. A closure registered with
         | XeroBridge::redirectAfterConnectUsing() wins over both -- config files
         | cannot hold closures once cached, hence the separate hook.
@@ -126,31 +128,35 @@ return [
     | forced token refresh, and every response rendered as JSON with timings
     | and Xero's rate-limit headers.
     |
-    | It is ON by default everywhere EXCEPT production, so it is there the
-    | moment the package is installed without ever being a surprise on a live
-    | deployment. It renders as a standalone HTML document with no build step,
-    | so it works the same in any application.
+    | It is OFF until XERO_CONSOLE_ENABLED=true is set in the environment that
+    | should have it, and nothing else switches it on. APP_ENV is not
+    | consulted, so neither a live host whose APP_ENV is `prod` or `live` nor
+    | a staging box cloned from an .env.example that says `local` serves it by
+    | accident. Whoever gets past its middleware can read the connected
+    | organisation's invoices and contacts, force a token refresh and forget
+    | the stored connection. It renders as a standalone HTML document with no
+    | build step, so it works the same in any application.
     |
     | Note: `php artisan route:cache` bakes in whatever was registered at cache
     | time, exactly as it does for `routes.enabled`. The console route also
     | re-checks `enabled` on every request and 404s when it is off, so a cache
-    | built elsewhere cannot leave the page reachable in production.
+    | built where the console was on cannot leave the page reachable anywhere
+    | it is off.
     |
     */
 
     'console' => [
         /*
-        | null  => on everywhere except production
-        | true  => on, including production
-        | false => off everywhere
+        | true => on, in any environment
+        | anything else => off: unset, empty, false, and any value that does
+        |                  not read as true ('off', 'no', a typo)
         |
-        | The environment is deliberately NOT resolved here. A config file is
-        | evaluated once, at `config:cache` time, so baking the decision in
-        | would freeze whichever environment happened to run that command.
-        | Left null, it is resolved at boot instead, on every request.
+        | Off by default since 1.5.0; earlier releases switched it on wherever
+        | APP_ENV was not exactly `production`.
         |
-        | An empty value counts as unset, because a bare `XERO_CONSOLE_ENABLED=`
-        | copied out of an example file is not a request to switch it off.
+        | Unset and empty are kept as null rather than folded into false. Both
+        | mean off, but xero-bridge:install and xero-bridge:status can then say
+        | "not set" instead of claiming somebody switched it off.
         */
         'enabled' => in_array(env('XERO_CONSOLE_ENABLED'), [null, ''], true)
             ? null
@@ -161,8 +167,9 @@ return [
 
         /*
         | Comma separated, like routes.middleware. The console posts a CSRF
-        | token, so it needs something that starts a SESSION. Narrow this to
-        | your own admin gate wherever you have one, e.g.
+        | token, so it needs something that starts a SESSION. The default,
+        | web,auth, lets ANY authenticated user in: narrow it to your own admin
+        | gate wherever you switch the console on, e.g.
         | XERO_CONSOLE_MIDDLEWARE="web,auth,can:manage-xero"
         */
         'middleware' => array_values(array_filter(array_map(
@@ -222,6 +229,24 @@ return [
 
     'writes' => [
         'enabled' => (bool) env('XERO_WRITES_LEDGER', false),
+
+        /*
+        | What a write does when the ledger is on but cannot record its claim
+        | -- the table is missing, the database is unreachable, or the insert
+        | fails for any reason other than a duplicate.
+        |
+        | false => log it (an error for each claim that fails; a one-time
+        |          warning for a missing table) and send the write UNPROTECTED
+        |          -- the default, and how every release before 1.5.0 behaved
+        | true  => refuse: throw XeroWriteLedgerUnavailableException and send
+        |          nothing. Nothing reached Xero, so retrying is safe.
+        |
+        | Only a write that names an owner -- for($order) -- is ever refused,
+        | because only those are deduplicated. A write with no owner has nothing
+        | for the ledger to protect. A write inside a database transaction is
+        | still only warned about, in either mode.
+        */
+        'strict' => (bool) env('XERO_WRITES_STRICT', false),
 
         'table' => env('XERO_WRITES_TABLE', 'xero_write_records'),
 
@@ -384,6 +409,21 @@ return [
 
         'path' => env('XERO_WEBHOOK_PATH', 'webhook'),
 
+        /*
+        | The prefix for the webhook route alone, in place of routes.prefix:
+        | XERO_WEBHOOK_PREFIX=api/v1/xero serves it at /api/v1/xero/webhook
+        | while connect, callback and the console stay under routes.prefix.
+        |
+        | Unset or empty follows routes.prefix, so nothing moves until this is
+        | set -- a bare `XERO_WEBHOOK_PREFIX=` copied out of an example file
+        | must not move a live endpoint. `/` means the site root. The route
+        | keeps its own cookieless middleware stack under any prefix.
+        |
+        | Moving it means re-entering the URL in the Xero app's Webhooks tab
+        | (Xero re-runs its intent-to-receive check) and rebuilding route:cache.
+        */
+        'prefix' => env('XERO_WEBHOOK_PREFIX'),
+
         // The queue the envelope job is pushed onto. The controller never
         // processes events inline; that is what protects the 5-second budget.
         'queue' => env('XERO_WEBHOOK_QUEUE'),
@@ -391,17 +431,26 @@ return [
         'connection' => env('XERO_WEBHOOK_QUEUE_CONNECTION'),
 
         /*
-        | How long the uniqueness lock on the envelope job is held, in seconds.
+        | How long the uniqueness lock on the envelope job may be held, in
+        | seconds (at least 60).
         |
-        | The controller dispatches the job BEFORE returning its 200, so if the
+        | The controller queues the job BEFORE returning its 200, so if the
         | response misses Xero's five-second budget the job is already queued
-        | when Xero retries -- and without a lock every listener fires twice for
-        | one logical change. This window covers Xero's retries for a single
-        | delivery.
+        | when Xero retries. The controller takes this lock before queuing, so
+        | that retry is answered 200 without being queued again, and listeners
+        | fire once. A retry that arrives while the first delivery is still
+        | being queued -- on the sync driver, while its listeners still run --
+        | is answered 503 instead, so Xero tries again once the outcome is
+        | known: a push that then fails costs a later duplicate, never the
+        | events. The lock is released as soon as the job finishes or its
+        | last attempt fails; this is only the ceiling for a job whose worker
+        | died. It is long enough to cover Xero's retries of one delivery.
         |
-        | The lock is only as good as the cache store: `array` and `file` give
-        | no cross-process guarantee, so with several queue workers you want
-        | redis, memcached or database here as well.
+        | The lock lives in the store XERO_LOCK_STORE names, as token refresh
+        | locks do, or the default cache store while that is unset. It is only
+        | as good as that store: `array` holds it inside one process and `file`
+        | inside one server, so with more than one web server set
+        | XERO_LOCK_STORE to redis, memcached or database.
         */
         'unique_for' => (int) env('XERO_WEBHOOK_UNIQUE_FOR', 900),
 
@@ -413,6 +462,25 @@ return [
         | retry. Backoff is 10s, 30s, 2m, 10m.
         */
         'tries' => (int) env('XERO_WEBHOOK_TRIES', 5),
+
+        /*
+        | Events for an organisation with no stored connection here. Xero
+        | delivers events for every organisation connected to the Xero app, so
+        | this covers one connected to the same app from another environment,
+        | and one forgotten here but never disconnected at Xero.
+        |
+        | dispatch => fire XeroWebhookReceived for them like any other event
+        |             (the default, and how every release before 1.5.0
+        |             behaved), so each listener decides for itself
+        | ignore   => skip them before any listener runs: they are neither
+        |             dispatched nor recorded
+        |
+        | Any other value means dispatch. Under `ignore` an invalidated
+        | connection still counts as known, APPLICATION events (App Store
+        | subscriptions) are never skipped, and an event whose lookup fails is
+        | dispatched rather than lost.
+        */
+        'unknown_tenants' => env('XERO_WEBHOOK_UNKNOWN_TENANTS', 'dispatch'),
 
         /*
         |----------------------------------------------------------------------
@@ -507,8 +575,13 @@ return [
     | so a holder can never outlive its lock, and a waiter can never give up
     | before a dead holder's lock expires.
     |
-    | The lock is only as good as the cache store: `array` and `file` give no
-    | cross-process guarantee. Use redis, memcached or database in production.
+    | The lock is only as good as the cache store behind it. `array` locks only
+    | inside one process. `file` does serialise processes, but only on one
+    | server: the lock is a file on that server's disk. With the scheduler or
+    | queue workers on more than one server, use redis, memcached or database.
+    |
+    | The same store holds the webhook job's uniqueness lock
+    | (webhooks.unique_for).
     |
     */
 
@@ -530,9 +603,8 @@ return [
     |--------------------------------------------------------------------------
     |
     | A BARE table name. The host's database connection applies its own prefix:
-    | pips sets `prefix => 'pips_'` with prefix_indexes on its mysql connection,
-    | so its table becomes pips_xero_connections automatically. Never hardcode
-    | a prefix here.
+    | a connection with `prefix => 'app_'` (and prefix_indexes) therefore gets
+    | app_xero_connections automatically. Never hardcode a prefix here.
     |
     */
 
@@ -558,7 +630,9 @@ return [
     | on_tenant_conflict -- this org is already connected under a different key.
     |   'error'   : refuse (default). Silently re-keying would break every
     |               caller that already references the old key.
-    |   'rekey'   : move the existing row to the new key
+    |   'rekey'   : move the existing row to the new key. If that key already
+    |               holds a different org, on_key_conflict decides: 'replace'
+    |               deletes that row first, 'error' refuses and changes nothing.
     |
     */
 

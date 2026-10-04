@@ -8,8 +8,8 @@ its own roles and its own idea of who may look at customer data, and a package
 cannot know either. What it gives you is a stable table, an Eloquent model and
 the guarantee that nothing dangerous is in it.
 
-`/xero/console` is unchanged and is still a developer tool. It does not show
-this data.
+The [test console](07-test-console.md) at `/xero/console` is a developer tool,
+off unless `XERO_CONSOLE_ENABLED=true`, and it does not show this data.
 
 ---
 
@@ -36,7 +36,33 @@ should keep.
 | `XERO_CAPTURE_MODE` | `writes` | `all`, `writes` or `errors`. See below. |
 | `XERO_CAPTURE_RETAIN_DAYS` | `90` | Pruned by `xero-bridge:prune`. |
 | `XERO_CAPTURE_MAX_BODY_BYTES` | `65536` | Per body, after redaction. |
-| `XERO_CAPTURE_TABLE` | `xero_api_calls` | Bare name; your connection prefix applies. |
+| `XERO_CAPTURE_TABLE` | `xero_api_calls` | Bare name; your connection prefix applies. Set it before migrating if the name is taken — see below. |
+| `XERO_CAPTURE_XERO_API` | `true` | Record Xero Accounting API calls. |
+| `XERO_CAPTURE_XERO_IDENTITY` | `true` | Record token exchanges with identity.xero.com (every credential in them is redacted). |
+| `XERO_CAPTURE_MYINVOIS_API` | `true` | Record LHDN MyInvois API calls. |
+| `XERO_CAPTURE_MYINVOIS_TOKEN` | `true` | Record MyInvois token requests (credentials redacted). |
+| `XERO_CAPTURE_PLACEHOLDER` | `[redacted]` | What a removed value becomes. |
+
+**Until the table exists, the switch records nothing.** The package asks the
+database once per process whether the table is there, logs one line naming the
+publish command, and keeps a "no table" answer for the life of the process — so
+a queue worker or Octane server that asked before you migrated captures nothing
+until it restarts (`php artisan queue:restart`). A check that fails outright,
+because the database could not be asked, counts as "no" for a minute and is then
+asked again.
+
+**If the name is already taken.** On a connection with `'prefix' => 'app_'` the
+table is `app_xero_api_calls`. If a table of that name already exists and is not
+the package's, set `XERO_CAPTURE_TABLE` to an unused bare name **before** you
+migrate, in every environment — the model reads it at runtime too — and leave it
+set. The migration checks rather than trusts the name: over a same-named table
+that lacks any column it would have created, it stops before changing anything,
+names the table, the missing columns and `XERO_CAPTURE_TABLE`, and is not
+recorded as run, so the next `php artisan migrate` resumes at it once the
+variable is set. Rolled back, it drops only a table it could have created, never
+a stranger's. A copy published before 1.5.0 does neither, and `composer update`
+does not change a file you have published. While capture is on,
+`xero-bridge:status` warns about a table of that name that is not the package's.
 
 **Modes.** `writes` is the default because reads are the volume and the flood of
 `GET /Invoices` during a sync answers no question a human asks. A **failed** call
@@ -50,6 +76,11 @@ Schedule the prune, or the table grows forever:
 // routes/console.php
 Schedule::command('xero-bridge:prune')->dailyAt('02:00');
 ```
+
+Prune deletes only from the package's own table. A table of yours named `xero_api_calls` — one
+lacking any of the package's `logical_call_id`, `channel` and `created_at` columns — is skipped with an error naming
+`XERO_CAPTURE_TABLE`, whether capture is on or off. Up to 1.4.3 prune deleted its rows older than
+`XERO_CAPTURE_RETAIN_DAYS`.
 
 ---
 
@@ -198,10 +229,14 @@ killed mid-call leaves no row at all. "Did that invoice reach Xero?" is answered
 by `xero_write_records`, which is inserted *before* the request precisely so it
 survives that. Never answer it from here.
 
-**Recording is best-effort.** If the insert fails, the recorder warns once and
-the Xero call carries on unaffected. That is the correct trade — capture must
-never be the thing that breaks a payment run — but it means the table can have
-gaps, and it is not evidence of absence.
+**Recording is best-effort.** If the insert fails, the recorder warns once per
+process — `xero-bridge: could not record an API call, so the capture table will
+have gaps. The call itself was unaffected.` — and the Xero call carries on
+unaffected. That is the correct trade — capture must never be the thing that
+breaks a payment run — but it means the table can have gaps, and it is not
+evidence of absence. A missing table is just as quiet after its one line (see
+[Turning it on](#turning-it-on)), and a column you add to the table without a
+default makes every insert fail.
 
 ---
 

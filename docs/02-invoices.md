@@ -48,11 +48,15 @@ $due = XeroDate::from($invoice, 'DueDate');   // ?CarbonImmutable, prefers DueDa
 4. **There is no HTTP DELETE for invoices.** `delete()` and `void()` are `Status` changes, and which one
    is legal depends on the current status.
 5. **Idempotency keys last six minutes.** They protect an immediate network retry, not a queued job that
-   retries later. Persist the returned `InvoiceID` as your real defence against duplicates.
+   retries later. Persist the returned `InvoiceID` as your real defence against duplicates, or let the
+   write ledger do it for you — see [Idempotency keys](#idempotency-keys).
 
 > ⚠️ **The resource instance is shared.** `XeroBridge::invoices()` is memoised per connection key, so two
-> calls return the *same* object. This matters for the two opt-in guards below — see
-> [The two safety guards](#the-two-safety-guards).
+> calls return the *same* object — and in a queue worker, the same object for every job until the worker
+> restarts. That is safe because nothing you call on it changes it: `withContactMutation()`,
+> `replacingLineItems()` and the write ledger's `for()` each return a **copy**, and a resource taken
+> through `withDefaults()` is built fresh. Chain them into the call that needs them; on a line of their
+> own they do nothing. See [The two safety guards](#the-two-safety-guards).
 
 ---
 
@@ -63,7 +67,7 @@ Each connection carries four optional defaults, configured in `config/xero-bridg
 ```php
 'connections' => [
     'default' => [
-        'account_code'      => env('XERO_ACCOUNT_CODE'),
+        'account_code'      => env('XERO_ACCOUNT_CODE'),    // no default: it differs per organisation
         'tax_type'          => env('XERO_TAX_TYPE'),        // null on purpose
         'currency'          => env('XERO_CURRENCY', 'MYR'),
         'branding_theme_id' => env('XERO_BRANDING_THEME_ID'),
@@ -89,7 +93,8 @@ Named connections inherit the `default` block; an explicit key wins even when it
   does **not** add a second, conflicting `'AccountCode'`.
 - Account codes and tax types differ per Xero organisation — a `200` sales account in one organisation
   may be `4000` in another. Discover them with `XeroBridge::connection($key)->settings()->accounts()`
-  rather than hardcoding.
+  rather than hardcoding. That is why `account_code` ships with no default: with `XERO_ACCOUNT_CODE`
+  unset, nothing is filled in and the line goes to Xero without an `AccountCode`.
 
 ### The SST rule: a line that already states tax is never touched
 
@@ -121,12 +126,33 @@ $invoice = XeroBridge::withDefaults(['account_code' => '4000'])
     ->create($payload);
 ```
 
-> ⚠️ **The override is not scoped to the expression.** `withDefaults()` does return a clone of the
-> manager, but the defaults are read once, when the resource is first built, and resources are memoised
-> per connection key. So if `XeroBridge::invoices()` has already been called for this connection in this
-> process, the memoised instance comes back and the override is **silently ignored**; if it has not, the
-> override is baked in and applies to every later `XeroBridge::invoices()` call for that connection.
-> When the value matters, put it on the payload itself.
+**An override applies to that expression only.** `withDefaults()` returns a clone of the manager, and
+every resource taken from the clone is built fresh, with the override layered over the connection's
+configured defaults. So the override is honoured even when `XeroBridge::invoices()` has already been
+resolved for this connection, and it never reaches a later plain `XeroBridge::invoices()` call. Hold the
+clone in a variable and the override goes wherever that variable goes — and nowhere else:
+
+```php
+$xero = XeroBridge::withDefaults(['account_code' => '4000', 'payment_account_code' => '090']);
+
+$xero->invoices()->create($payload);                    // AccountCode 4000
+$xero->payments()->createForInvoice($invoiceId, 100);   // Account.Code 090
+XeroBridge::invoices()->create($payload);               // the configured default again
+```
+
+`tests/Unit/WithDefaultsTest.php` pins all of this, including that an override stays with its own
+connection. `withDefaults()` and `connection()` chain in either order.
+
+The keys that take effect are the four above, plus `payment_account_code`, which
+`payments()->createForInvoice()` reads. Any other key is carried along — `defaults()->get()` returns it —
+but never applied, so a misspelt key silently leaves the configured value in force.
+
+> ⚠️ **A plain `XeroBridge::invoices()` reads the defaults once.** The memoised resource takes the
+> connection's defaults from config when it is first built, and keeps them. A
+> `config()->set('xero-bridge.connections.default.account_code', '4000')` made after that — in a queue
+> worker, after an earlier job has already used `invoices()` on that connection — does not reach it,
+> although `XeroBridge::defaults()` reports the new value. For a value that changes at runtime, use
+> `withDefaults()` or put it on the payload.
 
 ---
 
@@ -181,13 +207,31 @@ XeroBridge::invoices()->withContactMutation()->create($payload);   // I do mean 
 XeroBridge::invoices()->replacingLineItems()->update($id, $data);  // I do mean to replace every line
 ```
 
-> ⚠️ **The opt-in does not always reset.** Both flags are cleared when a payload passes through
-> `create()`/`createMany()` preparation, and when a guard throws. They are **not** cleared by a successful
-> `update()`. Because the resource is memoised per connection, a flag set for an `update()` stays set for
-> the rest of the request — a later `XeroBridge::invoices()->update(...)` in the same process will be
-> allowed through unguarded. Call the opt-in as part of the same expression, never on a variable you keep,
-> and treat a request that has used `replacingLineItems()->update()` as having that guard disabled from
-> then on.
+Each opt-in returns a **copy** of the resource with that one guard relaxed — never the shared instance,
+the same idiom as the write ledger's [`for()`](09-persistence.md#write-dedupe). So:
+
+- **It covers every call made through the copy, and nothing else.** That includes every invoice in a
+  `createMany()`. No other caller of `XeroBridge::invoices()` is affected — not later in the request, and
+  not a later job on the same queue worker.
+- **It works on either side of `for()`.** `invoices()->for($order)->withContactMutation()->create(...)`
+  and `invoices()->withContactMutation()->for($order)->create(...)` do the same thing.
+- **On a line of its own it does nothing.** `$invoices->replacingLineItems();` returns a copy that the
+  statement discards, so the next `$invoices->update(...)` is still guarded: the guard throws and nothing
+  is sent. Chain the opt-in into the call — the exception message says exactly that.
+- **A copy kept in a variable stays opted in** for every call made through it. Keep one only while every
+  one of those calls is meant to rewrite the contact or replace the lines.
+
+```php
+$invoices = XeroBridge::invoices();
+
+$invoices->withContactMutation();             // does nothing: the copy is discarded
+$invoices->create($payloadWithContactName);   // throws UnsafeContactPayloadException, nothing sent
+
+$invoices->withContactMutation()->create($payloadWithContactName);   // sent
+```
+
+`tests/Unit/InvoicesTest.php` pins each of these, and `tests/Feature/WriteLedgerTest.php` the two orders
+around `for()`.
 
 ---
 
@@ -262,7 +306,8 @@ $invoice = XeroBridge::invoices()->create([
 ```
 
 Sent as `POST /api.xro/2.0/Invoices` with an `Idempotency-Key` header and this body — note the
-`Invoices` wrapper, and `AccountCode` / `CurrencyCode` filled from the connection defaults:
+`Invoices` wrapper, and `AccountCode` / `CurrencyCode` filled from the connection defaults (this
+connection sets `XERO_ACCOUNT_CODE=200`):
 
 ```json
 {
@@ -361,6 +406,9 @@ what you persist.
 - Throws `UnsafeContactPayloadException` when the `Contact` block carries anything besides `ContactID`.
 - Throws `XeroBridgeException` when `$idempotencyKey` is empty or longer than 128 characters.
 - Dispatches `InvoiceCreated` with the connection key, the created invoice and the key used.
+- Named with `for($order)` while the write ledger is on, the write is claimed before it is sent; a second
+  `create()` for the same record then throws `XeroWriteAlreadyClaimedException` with nothing sent, unless
+  Xero rejected the first with a 400. See [Persistence](09-persistence.md#write-dedupe).
 - A validation failure from Xero (unknown `AccountCode`, missing contact) is a 400 and surfaces as
   `XeroValidationException`, whose `validationErrors()` holds Xero's own messages.
 - `Status` is yours to set. Omit it and Xero creates a `DRAFT`; send `AUTHORISED` to approve on creation.
@@ -449,6 +497,14 @@ element, in `StatusAttributeString`:
   `errorMessages()` reads both.
 - All-or-nothing is not available through this method. If you need the batch to fail as a unit, call
   `$result->throwIfAnyFailed()` and compensate yourself — the successful elements are already in Xero.
+- Every element is checked — `Type`, the `Contact` block — before anything is sent, so one bad element
+  refuses the whole batch. A chained `withContactMutation()` covers every element.
+- **Not protected by the write ledger.** Only `create()` takes a claim. `for($order)->createMany(...)` is
+  still sent, but without a claim — a retry can create every invoice in it again — and it logs a warning
+  saying so, whether or not the ledger is switched on: "xero-bridge: createMany() was called on a
+  resource named with for(), but only create() is protected by the write ledger…". When each invoice
+  needs that protection, call `create()` once per invoice. See
+  [Persistence](09-persistence.md#write-dedupe).
 
 ---
 
@@ -675,9 +731,11 @@ Sent as `POST /api.xro/2.0/Invoices/22222222-2222-2222-2222-222222222222`:
 **Notes / gotchas**
 
 - **Connection defaults are not applied on update.** Nothing is filled in for you here.
-- The `LineItems` guard applies: every line needs a `LineItemID`, or call `replacingLineItems()` first.
-  Read the reset caveat in [The two safety guards](#the-two-safety-guards) before you do.
-- The contact guard applies: `Contact` may contain `ContactID` and nothing else.
+- The `LineItems` guard applies: every line needs a `LineItemID`, or chain `replacingLineItems()` in
+  front of the call — `invoices()->replacingLineItems()->update(...)`. See
+  [The two safety guards](#the-two-safety-guards).
+- The contact guard applies: `Contact` may contain `ContactID` and nothing else, unless
+  `withContactMutation()` is chained in front.
 - There is no local status preflight on `update()`. Xero itself rejects edits to a `PAID`, `VOIDED` or
   `DELETED` invoice, and that arrives as `XeroValidationException`.
 - Changing `Status` through `update()` works but bypasses the transition table — prefer `authorise()`,
@@ -1006,7 +1064,7 @@ XeroBridge::invoices()->markAsSent('22222222-2222-2222-2222-222222222222');
 
 ### withContactMutation()
 
-Opts the next payload out of the contact guard.
+Returns a copy of the resource whose payloads may carry contact fields beside `ContactID`.
 
 ```php
 public function withContactMutation(): static
@@ -1027,7 +1085,13 @@ XeroBridge::invoices()->withContactMutation()->create([
 
 **Notes / gotchas**
 
-- Returns the same resource instance for chaining; it does not clone.
+- Returns a **copy**, never `$this`. The opt-in covers every call made through that copy — `create()`,
+  every invoice in a `createMany()`, `update()` — and nothing else; the shared `XeroBridge::invoices()`
+  instance is never changed.
+- Chain it. Called on a line of its own it does nothing: the next payload carrying contact fields still
+  throws `UnsafeContactPayloadException`, with nothing sent.
+- It works on either side of `for()`.
+- A copy kept in a variable stays opted in for every call made through it.
 - Use it only when you genuinely intend Xero to rewrite the contact record. Any `ContactPersons` you do
   not include in the request **are deleted**, irreversibly.
 - The safe alternative is almost always to update the contact explicitly first with
@@ -1037,7 +1101,7 @@ XeroBridge::invoices()->withContactMutation()->create([
 
 ### replacingLineItems()
 
-Opts the next `update()` out of the line-items guard.
+Returns a copy of the resource whose `update()` accepts `LineItems` without a `LineItemID` on every line.
 
 ```php
 public function replacingLineItems(): static
@@ -1057,9 +1121,13 @@ XeroBridge::invoices()->replacingLineItems()->update('22222222-2222-2222-2222-22
 
 - Every existing line is deleted and recreated with new `LineItemID` values, so any of your own records
   pointing at an old `LineItemID` are now stale.
-- Returns the same resource instance; it does not clone.
-- See the reset caveat in [The two safety guards](#the-two-safety-guards): this flag is **not** cleared
-  by a successful `update()`.
+- Returns a **copy**, never `$this`. The opt-in covers every `update()` made through that copy and
+  nothing else; the shared `XeroBridge::invoices()` instance is never changed, whether the update
+  succeeds or fails.
+- Chain it. Called on a line of its own it does nothing: the next `update()` with a line lacking a
+  `LineItemID` still throws `InvalidInvoicePayloadException`, with nothing sent.
+- A copy kept in a variable stays opted in for every `update()` made through it. See
+  [The two safety guards](#the-two-safety-guards).
 
 ---
 
@@ -1133,6 +1201,13 @@ XeroBridge::invoices()->create($payload, $key);
 > Xero has forgotten the key and will happily create a second invoice. The real defence is to persist the
 > returned `InvoiceID` against your own record and make the job a no-op once it is set — which is what
 > the `InvoiceCreated` event is for.
+
+The package can keep that record for you. With the write ledger on (`XERO_WRITES_LEDGER=true` and its
+table migrated), `XeroBridge::invoices()->for($order)->create([...])` claims the write before it is sent,
+and a later attempt for the same record — a job retried an hour on — throws
+`XeroWriteAlreadyClaimedException` instead of sending a second invoice. Only a payload Xero rejected with
+a 400 frees the claim, for a corrected retry. `createMany()` takes no claim. See
+[Persistence](09-persistence.md#write-dedupe).
 
 Writes that you do not pass a key to still get one: the HTTP client generates an `Idempotency-Key` for
 every request that is not a `GET`, `HEAD` or `OPTIONS` when `xero-bridge.http.idempotency` is `true` (the
@@ -1342,6 +1417,8 @@ Everything below extends `Peoplelogy\XeroBridge\Exceptions\XeroBridgeException`.
 | `UnsafeContactPayloadException` | The `Contact` block carries a `ContactID` plus other fields. Nothing is sent. |
 | `InvalidInvoiceTransitionException` | A preflight found the status change illegal. The message names the current status and what is legal from it. |
 | `InvoiceCannotBeVoidedException` | A void preflight found applied payments. The message names the `PaymentID`s. |
+| `XeroWriteAlreadyClaimedException` | The write ledger refused a `for($order)->create()`: that record's invoice already exists (`xeroId()`), or another attempt is in flight or never recorded its outcome (`isPending()`). Nothing is sent — stop, do not retry. See [Persistence](09-persistence.md#write-dedupe). |
+| `XeroWriteLedgerUnavailableException` | With the write ledger on and `XERO_WRITES_STRICT=true`, the ledger could not record the claim for a `for($order)->create()` — its table is missing, the database is unreachable, or the insert failed for a reason other than a duplicate. Nothing is sent, so retrying is safe. |
 | `XeroBridgeException` | An identifier that is empty or contains `/`; an idempotency key that is empty or over 128 characters; `all()` exceeding `$maxPages`; `pdf()` receiving a non-PDF; `onlineUrl()` receiving no URL. |
 | `XeroValidationException` | Xero rejected the request (400). `validationErrors()` holds Xero's messages; `throwIfAnyFailed()` on a `BatchResult` raises the same type. |
 | `XeroAuthenticationException` | A 401 that survived one token refresh, or a 401/403 problem envelope. |
@@ -1383,20 +1460,46 @@ class RecordXeroInvoice
 Persisting `invoiceId()` against your own record in this listener is the duplicate protection that the
 six-minute idempotency window cannot give you.
 
+With the write ledger on, a `create()` the ledger refuses sends nothing, so `InvoiceCreated` does not
+fire; `Peoplelogy\XeroBridge\Events\XeroWriteBlocked` does, just before the
+`XeroWriteAlreadyClaimedException`. See [Persistence](09-persistence.md#write-dedupe).
+
 ---
 
 ## Testing against a fake
 
 The package goes through Laravel's HTTP client, so `Http::fake()` is all you need. Nothing here reaches
-Xero.
+Xero. The whole harness — a complete test class, faking the email endpoint, mocking the facade, and the
+traps — is on one page:
+[Testing a consuming application](06-recipes.md#6-testing-a-consuming-application). The short version
+is that every test needs three things: `Http::preventStrayRequests()`, a connection row with a future
+`expires_at`, and fake patterns that include the API path and end in `*`.
 
 ```php
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use Peoplelogy\XeroBridge\Facades\XeroBridge;
+use Peoplelogy\XeroBridge\Models\XeroConnection;
+
+Http::preventStrayRequests();
+
+// The token every call reads. With no row the call throws
+// XeroConnectionNotFoundException; with a token expired or expiring within a
+// minute it first refreshes at identity.xero.com, which nothing here fakes.
+XeroConnection::create([
+    'key' => 'default',
+    'tenant_id' => 'test-tenant-id',
+    'access_token' => 'test-access-token',
+    'refresh_token' => 'test-refresh-token',
+    'expires_at' => now()->addMinutes(30),
+]);
+
+// account_code has no shipped default. Set the one this test asserts on,
+// before the first invoices() call reads it.
+config(['xero-bridge.connections.default.account_code' => '200']);
 
 Http::fake([
-    'api.xero.com/*' => Http::response([
+    'api.xero.com/api.xro/2.0/Invoices*' => Http::response([
         'Invoices' => [[
             'InvoiceID' => '22222222-2222-2222-2222-222222222222',
             'InvoiceNumber' => 'INV-0042',
@@ -1415,18 +1518,21 @@ Http::assertSent(fn (Request $r) => $r->method() === 'POST'
     && $r->data()['Invoices'][0]['LineItems'][0]['AccountCode'] === '200');
 ```
 
-Paging is faked with a sequence, one entry per page:
+Paging is faked with a sequence, one entry per page — in a test of its own, with the same connection
+row, because the first stub that matches a URL wins:
 
 ```php
-Http::fake(['api.xero.com/*' => Http::sequence()
+Http::fake(['api.xero.com/api.xro/2.0/Invoices*' => Http::sequence()
     ->push(['Invoices' => array_fill(0, 100, ['InvoiceID' => 'x']), 'pagination' => ['page' => 1, 'pageSize' => 100, 'pageCount' => 2, 'itemCount' => 150]], 200)
     ->push(['Invoices' => array_fill(0, 50, ['InvoiceID' => 'x']), 'pagination' => ['page' => 2, 'pageSize' => 100, 'pageCount' => 2, 'itemCount' => 150]], 200)]);
 
 expect(XeroBridge::invoices()->all()->count())->toBe(150);
 ```
 
-Add `Http::preventStrayRequests()` in your test bootstrap so any request you forgot to stub fails loudly
-rather than reaching `api.xero.com`.
+The trailing `*` is not decoration. Laravel matches a pattern against the whole URL, query string
+included, so `'api.xero.com/api.xro/2.0/Invoices'` without it matches `create()` and an unfiltered
+`list()`, but not `find()`, a filtered `list()`, `all()` or `createMany()`, which adds
+`?summarizeErrors=false`.
 
 ---
 

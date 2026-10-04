@@ -183,7 +183,7 @@ it('allows contact mutation when it is explicitly requested', function () {
     Http::assertSentCount(1);
 });
 
-it('resets the contact mutation opt-in after one call', function () {
+it('does not leak the contact mutation opt-in into the next call', function () {
     fakeCreated();
 
     $invoices = XeroBridge::invoices();
@@ -238,6 +238,165 @@ it('accepts an update whose lines all carry a LineItemID', function () {
     ]);
 
     Http::assertSentCount(1);
+});
+
+/*
+|--------------------------------------------------------------------------
+| The opt-ins are copies
+|--------------------------------------------------------------------------
+|
+| XeroBridge::invoices() hands every caller the ONE instance memoised for the
+| connection, for the life of the process -- a queue worker, or every request
+| under Octane. An opt-in set on that instance would switch a guard off for
+| writes that never asked, so each opt-in returns a copy instead.
+|
+*/
+
+/** Lines with no LineItemID: the update Xero would delete and recreate. */
+function invoiceUnsafeLines(): array
+{
+    return ['LineItems' => [['Description' => 'Changed']]];
+}
+
+/** A payload whose Contact block would rewrite the contact record. */
+function invoiceRenamingContact(string $name = 'Renamed'): array
+{
+    return invoicePayload(['Contact' => ['ContactID' => 'c-1', 'Name' => $name]]);
+}
+
+function invoiceUpdated(): void
+{
+    Http::fake(['api.xero.com/*' => Http::response(['Invoices' => [['InvoiceID' => 'inv-1']]], 200, xeroHeaders())]);
+}
+
+it('leaves the shared instance untouched', function (string $optIn) {
+    $shared = XeroBridge::invoices();
+
+    expect($shared->{$optIn}())->not->toBe($shared)
+        ->and(XeroBridge::invoices())->toBe($shared);
+})->with(['withContactMutation', 'replacingLineItems']);
+
+it('does not leak a line item replacement into a later update', function () {
+    invoiceUpdated();
+
+    XeroBridge::invoices()->replacingLineItems()->update('inv-1', invoiceUnsafeLines());
+
+    // Before the fix update() never cleared the flag, so this went out too.
+    expect(fn () => XeroBridge::invoices()->update('inv-2', invoiceUnsafeLines()))
+        ->toThrow(InvalidInvoicePayloadException::class, 'LineItemID');
+
+    Http::assertSentCount(1);
+});
+
+it('does not leak a line item replacement when the update fails', function (string $identifier, string $thrown, int $sent) {
+    Http::fake(['api.xero.com/*' => Http::response([
+        'ErrorNumber' => 10,
+        'Type' => 'ValidationException',
+        'Message' => 'A validation exception occurred',
+        'Elements' => [['ValidationErrors' => [['Message' => 'Invoice not of valid status for modification']]]],
+    ], 400, xeroHeaders())]);
+
+    expect(fn () => XeroBridge::invoices()->replacingLineItems()->update($identifier, invoiceUnsafeLines()))
+        ->toThrow($thrown);
+
+    // A failed opt-in call must not leave the guard off behind it.
+    expect(fn () => XeroBridge::invoices()->update('inv-2', invoiceUnsafeLines()))
+        ->toThrow(InvalidInvoicePayloadException::class, 'LineItemID');
+
+    Http::assertSentCount($sent);
+})->with([
+    'Xero rejects it' => ['inv-1', XeroValidationException::class, 1],
+    'its identifier is refused before sending' => ['inv/1', XeroBridgeException::class, 0],
+]);
+
+it('does not leak a contact mutation through an update into the next create', function () {
+    fakeCreated();
+
+    XeroBridge::invoices()->withContactMutation()->update('inv-1', [
+        'Contact' => ['ContactID' => 'c-1', 'Name' => 'Renamed'],
+    ]);
+
+    expect(fn () => XeroBridge::invoices()->create(invoiceRenamingContact('Again')))
+        ->toThrow(UnsafeContactPayloadException::class, 'ContactPersons');
+
+    Http::assertSentCount(1);
+});
+
+it('covers every invoice in a batch', function () {
+    Http::fake(['api.xero.com/*' => Http::response(['Invoices' => [
+        ['StatusAttributeString' => 'OK', 'InvoiceID' => 'a1'],
+        ['StatusAttributeString' => 'OK', 'InvoiceID' => 'a2'],
+    ]], 200, xeroHeaders())]);
+
+    // Before the fix the first invoice's preparation cleared the opt-in, so
+    // the second was refused.
+    XeroBridge::invoices()->withContactMutation()->createMany([
+        invoiceRenamingContact('One'),
+        invoiceRenamingContact('Two'),
+    ]);
+
+    expect(array_column(array_column(sentBody()['Invoices'], 'Contact'), 'Name'))->toBe(['One', 'Two']);
+});
+
+it('guards every invoice in a batch without the opt-in', function () {
+    fakeCreated();
+
+    expect(fn () => XeroBridge::invoices()->createMany([
+        invoicePayload(),
+        invoiceRenamingContact(),
+    ]))->toThrow(UnsafeContactPayloadException::class);
+
+    Http::assertNothingSent();
+});
+
+it('does nothing when replacingLineItems() is called as a statement', function () {
+    invoiceUpdated();
+
+    $invoices = XeroBridge::invoices();
+    $invoices->replacingLineItems();
+
+    // The copy it returned was thrown away, so this is still the guarded
+    // instance -- and the message says to chain it.
+    expect(fn () => $invoices->update('inv-1', invoiceUnsafeLines()))
+        ->toThrow(InvalidInvoicePayloadException::class, 'chain replacingLineItems()');
+
+    Http::assertNothingSent();
+});
+
+it('does nothing when withContactMutation() is called as a statement', function () {
+    fakeCreated();
+
+    $invoices = XeroBridge::invoices();
+    $invoices->withContactMutation();
+
+    expect(fn () => $invoices->create(invoiceRenamingContact()))
+        ->toThrow(UnsafeContactPayloadException::class, 'chain withContactMutation()');
+
+    Http::assertNothingSent();
+});
+
+it('keeps a kept replacingLineItems() copy opted in for every update through it', function () {
+    invoiceUpdated();
+
+    $replacing = XeroBridge::invoices()->replacingLineItems();
+
+    $replacing->update('inv-1', invoiceUnsafeLines());
+    $replacing->update('inv-2', invoiceUnsafeLines());
+
+    Http::assertSentCount(2);
+});
+
+it('keeps a kept withContactMutation() copy opted in for every create through it', function () {
+    // The chosen semantics: the copy IS the opt-in, for as long as it is
+    // kept. Before the fix the first create cleared it.
+    fakeCreated();
+
+    $mutating = XeroBridge::invoices()->withContactMutation();
+
+    $mutating->create(invoiceRenamingContact('One'));
+    $mutating->create(invoiceRenamingContact('Two'));
+
+    Http::assertSentCount(2);
 });
 
 /*

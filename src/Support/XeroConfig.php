@@ -69,6 +69,24 @@ final class XeroConfig
         return Scopes::normalize($this->get('scopes'));
     }
 
+    /**
+     * The cache store XERO_LOCK_STORE names, or null for the default store.
+     *
+     * Only a non-empty string names a store. env() reads a bare
+     * XERO_LOCK_STORE= as '' and XERO_LOCK_STORE=false as false, and neither
+     * is a decision -- the same rule XERO_CONSOLE_ENABLED= follows. It matters
+     * because the cache manager changed underneath: Laravel 11 and 12 before
+     * 12.43 treat '' as "the default store", while 12.43+ and 13 look it up by
+     * name and throw "Cache store [] is not defined" -- which would fail every
+     * token refresh on a host that copied the key out of an example file.
+     */
+    public function lockStore(): ?string
+    {
+        $name = $this->get('tokens.lock_store');
+
+        return is_string($name) && $name !== '' ? $name : null;
+    }
+
     public function routePrefix(): string
     {
         return trim((string) $this->get('routes.prefix', 'xero'), '/');
@@ -77,6 +95,36 @@ final class XeroConfig
     public function routeName(string $suffix): string
     {
         return ((string) $this->get('routes.name_prefix', 'xero-bridge.')).$suffix;
+    }
+
+    /**
+     * The webhook route's URI: relative to the site root, no slash at either
+     * end. The one place the rule lives, so the route file and anything that
+     * prints the URL cannot disagree.
+     *
+     * webhooks.prefix replaces routes.prefix for this route alone. Null or ''
+     * follows routes.prefix, which is what every config published before the
+     * key existed gets, so their URL never moves; '/' is the explicit way to
+     * say "the site root".
+     *
+     * routes.prefix is read with NO 'xero' default, and webhooks.path with a
+     * default that applies only when the key is missing -- both exactly as
+     * routes/webhook.php read them before this method existed. A leading slash
+     * on the path is not "absolute": it has always been trimmed, so
+     * XERO_WEBHOOK_PATH=/webhook means /xero/webhook and has to keep meaning it.
+     */
+    public function webhookUri(): string
+    {
+        $prefix = $this->get('webhooks.prefix');
+
+        if ($prefix === null || $prefix === '') {
+            $prefix = $this->get('routes.prefix');
+        }
+
+        return trim(
+            trim((string) $prefix, '/').'/'.trim((string) $this->get('webhooks.path', 'webhook'), '/'),
+            '/',
+        );
     }
 
     /**

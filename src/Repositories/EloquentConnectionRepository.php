@@ -70,9 +70,27 @@ final class EloquentConnectionRepository implements ConnectionRepository
                 }
 
                 // Re-key: the existing row moves to the new key. If that key
-                // is occupied by a different row, that row is removed first
-                // so the unique index still holds.
+                // is held by a different row -- necessarily a different
+                // organisation, since tenant_id is unique -- moving onto it is
+                // a repoint of that key, so on_key_conflict decides it, and
+                // decides it BEFORE anything is deleted. Checked any later,
+                // the delete below has already happened, the moved row's
+                // tenant matches, and Case C can no longer see the conflict:
+                // 'error' would be bypassed and the occupant would vanish.
                 if ($byKey !== null) {
+                    if ((string) $this->config->get('on_key_conflict', 'replace') !== 'replace') {
+                        throw ConnectionKeyConflictException::make(
+                            $key,
+                            $byKey->displayName(),
+                            $tenant->displayName(),
+                        );
+                    }
+
+                    // 'replace': the occupant row is removed so the unique
+                    // index still holds. Its tokens go with it, although Xero
+                    // still lists the app as connected to that organisation.
+                    // An Eloquent instance delete, so the model's deleting and
+                    // deleted events fire.
                     $byKey->delete();
                 }
 

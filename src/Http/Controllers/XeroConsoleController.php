@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace Peoplelogy\XeroBridge\Http\Controllers;
 
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Contracts\View\View;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
@@ -23,8 +25,11 @@ use Peoplelogy\XeroBridge\MyInvois\IdType;
 use Peoplelogy\XeroBridge\MyInvois\MyInvoisClient;
 use Peoplelogy\XeroBridge\MyInvois\MyInvoisConfig;
 use Peoplelogy\XeroBridge\MyInvois\MyInvoisException;
+use Peoplelogy\XeroBridge\OAuth\Actor;
 use Peoplelogy\XeroBridge\Support\Diagnostics;
+use Peoplelogy\XeroBridge\Support\RedactionPolicy;
 use Peoplelogy\XeroBridge\Support\XeroConfig;
+use Psr\Log\LoggerInterface;
 use RuntimeException;
 use Throwable;
 
@@ -37,6 +42,12 @@ use Throwable;
  * `xero-bridge.console.writable_organisations`. That gate is
  * assertWritableOrganisation(), applied once in dispatch() from the
  * `xero_writes` flag on ACTIONS, so a new write action cannot forget it.
+ *
+ * Reads are not gated, and neither are the two connection-lifecycle actions:
+ * whoever gets past the middleware can read the connected organisation's
+ * invoices and contacts, and forgetting a connection takes the integration
+ * offline until someone reconnects. Credentials and bank details are masked
+ * out of whatever an action returns -- see mask().
  *
  * The route is registered only when the console is enabled, and re-checks that
  * on every request -- see EnsureConsoleEnabled.
@@ -94,12 +105,20 @@ class XeroConsoleController extends Controller
      */
     private array $organisations = [];
 
+    private readonly LoggerInterface $logger;
+
     public function __construct(
         private readonly Diagnostics $diagnostics,
         private readonly XeroConfig $config,
         private readonly MyInvoisConfig $myInvois,
         private readonly MyInvoisClient $myInvoisClient,
-    ) {}
+        // Optional only because this class is not final: a host subclass that
+        // calls parent::__construct() with the four arguments it has always
+        // passed keeps working, and logs through the container's logger.
+        ?LoggerInterface $logger = null,
+    ) {
+        $this->logger = $logger ?? app(LoggerInterface::class);
+    }
 
     /**
      * The console itself.
@@ -146,7 +165,10 @@ class XeroConsoleController extends Controller
         $startedAt = microtime(true);
 
         try {
-            $data = $this->dispatch($action, $key, $params);
+            $data = $this->mask(
+                $this->dispatch($request, $action, $key, $params),
+                (string) $this->config->get('capture.redact.placeholder', '[redacted]'),
+            );
 
             return response()->json([
                 'ok' => true,
@@ -178,7 +200,7 @@ class XeroConsoleController extends Controller
     /**
      * @param  array<string, mixed>  $p
      */
-    private function dispatch(string $action, string $key, array $p): mixed
+    private function dispatch(Request $request, string $action, string $key, array $p): mixed
     {
         // FIRST, before XeroBridge::connection() is touched. MyInvois has no
         // Xero connection and must work on a host that has never connected one.
@@ -224,7 +246,7 @@ class XeroConsoleController extends Controller
             'invoices.list' => $bridge->invoices()->list($this->buildInvoiceFilter($p)),
 
             'tokens.refresh' => $this->forceRefresh($key),
-            'connection.forget' => $this->forget($key),
+            'connection.forget' => $this->forget($request, $key),
 
             // Reachable only if someone adds to ACTIONS without adding a branch
             // here. Better a readable message than an UnhandledMatchError.
@@ -719,11 +741,18 @@ class XeroConsoleController extends Controller
 
     /**
      * Local only: drops the stored row so the connect flow can be replayed.
-     * Nothing is revoked at Xero, and no bookkeeping data is touched.
+     * Nothing is revoked at Xero and no bookkeeping data is touched, but every
+     * call through the key fails from here on: the integration is offline
+     * until someone reconnects.
+     *
+     * The only connection deletion a person triggers by hand, so it leaves a
+     * warning in the log naming who did it. Nothing else would record it: no
+     * Xero call is made, so there is no capture row, and the connection_id
+     * needed to finish the disconnect at Xero goes with the row.
      *
      * @return array<string, mixed>
      */
-    private function forget(string $key): array
+    private function forget(Request $request, string $key): array
     {
         $connection = XeroBridge::tokens()->find($key);
 
@@ -732,20 +761,102 @@ class XeroConsoleController extends Controller
         }
 
         $name = $connection->displayName();
-        $connection->delete();
+
+        // delete() answers false when a `deleting` listener on the model
+        // vetoed it -- a host's own guard, say. Then nothing was deleted, and
+        // reporting or logging a deletion would be false.
+        if ($connection->delete() === false) {
+            return [
+                'key' => $key,
+                'deleted' => false,
+                'note' => "The row for [{$name}] was not deleted: a listener on the model's deleting event cancelled it.",
+            ];
+        }
+
+        $actor = $this->actor($request);
+
+        $this->logger->warning(
+            'xero-bridge: the test console deleted a stored Xero connection. Calls through it fail until '
+            .'someone reconnects; the authorisation stays live in Xero until it is removed there.',
+            [
+                'connection' => $key,
+                'tenant_id' => $connection->tenant_id,
+                'connection_id' => $connection->connection_id,
+                'actor_id' => $actor?->id,
+                'actor_type' => $actor?->type,
+                'actor_guard' => $actor?->guard,
+            ],
+        );
 
         return [
             'key' => $key,
             'deleted' => true,
-            'note' => "Local row for [{$name}] deleted. This app's access is gone, but the "
-                .'authorisation still exists in Xero until it is removed there. Reconnect at '
-                .$this->config->connectUrl($key),
+            'note' => "Local row for [{$name}] deleted. Every call through [{$key}] now fails until someone "
+                .'reconnects at '.$this->config->connectUrl($key).'. The authorisation still exists in Xero '
+                .'until it is removed there.',
         ];
+    }
+
+    /**
+     * Who is signed in, as three scalars -- never the user model, which a log
+     * channel would serialise whole, password hash and all.
+     *
+     * Resolving the user must never decide whether a deletion that already
+     * happened gets logged, so a guard or user provider that throws just
+     * leaves the actor out.
+     */
+    private function actor(Request $request): ?Actor
+    {
+        try {
+            $user = $request->user();
+
+            return $user instanceof Authenticatable
+                ? Actor::from($user, app('auth')->getDefaultDriver())
+                : null;
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     /* ------------------------------------------------------------------ */
     /* Helpers */
     /* ------------------------------------------------------------------ */
+
+    /**
+     * Replace every value whose key RedactionPolicy::ALWAYS names --
+     * credentials and bank details -- at any depth, before the response is
+     * built.
+     *
+     * The reads hand Xero's payloads back whole: GET /Organisation carries
+     * APIKey, a live Xero-to-Xero credential; every contact read echoes the
+     * customer's BankAccountDetails and BatchPayments; GET /Accounts carries
+     * the organisation's own BankAccountNumber. The package refuses to store
+     * exactly these anywhere, and a page that any signed-in user may be able
+     * to open is no place to show them.
+     *
+     * Deliberately not the capture Redactor. Its node budget would truncate a
+     * 1000-invoice page, and its second tier would hide the TaxNumber this
+     * console has just set -- the very thing being tested. The matching is the
+     * policy's own: the whole key, case-insensitively, never a stem, so
+     * BankAccountType and AccountNumber survive. A matched value goes whole,
+     * subtree and all, which is what takes BatchPayments' siblings with it.
+     */
+    private function mask(mixed $data, string $placeholder): mixed
+    {
+        if (! is_array($data)) {
+            return $data;
+        }
+
+        foreach ($data as $key => $value) {
+            if (is_string($key) && isset(RedactionPolicy::ALWAYS[strtolower(trim($key))])) {
+                $data[$key] = $placeholder;
+            } elseif (is_array($value)) {
+                $data[$key] = $this->mask($value, $placeholder);
+            }
+        }
+
+        return $data;
+    }
 
     /**
      * Turn any throwable into something a human can act on, including the
@@ -758,7 +869,13 @@ class XeroConsoleController extends Controller
         $out = [
             'type' => class_basename($e),
             'class' => $e::class,
-            'message' => $e->getMessage(),
+            // Never a QueryException's own message: Laravel writes the SQL
+            // into it with every binding filled in, which for a token save
+            // that failed is the ciphertext of the tokens just rotated. The
+            // driver's message beneath it says what went wrong without them.
+            'message' => $e instanceof QueryException
+                ? ($e->getPrevious()?->getMessage() ?? 'A database query failed.')
+                : $e->getMessage(),
             'hint' => $this->hintFor($e),
         ];
 

@@ -77,7 +77,10 @@ or inject the client, which is what most applications should do:
 ```php
 use Peoplelogy\XeroBridge\MyInvois\MyInvoisClient;
 
-public function __construct(private readonly MyInvoisClient $myInvois) {}
+final class ValidateBuyerTin
+{
+    public function __construct(private readonly MyInvoisClient $myInvois) {}
+}
 ```
 
 `$idType` accepts an `IdType` case or a string in any casing. The four values LHDN publishes:
@@ -196,8 +199,8 @@ The validate endpoint allows **60 requests per minute** per Client ID. LHDN desc
 
 ## The console panel
 
-With the module enabled, the package's [test console](07-test-console.md) at `/xero/console` grows a
-**LHDN MyInvois** panel with two actions:
+With the module enabled, the package's [test console](07-test-console.md) at `/xero/console` — itself
+off unless `XERO_CONSOLE_ENABLED=true` — grows a **LHDN MyInvois** panel with two actions:
 
 | Action | What it does |
 |---|---|
@@ -229,11 +232,41 @@ exists. A consumer outside Malaysia sees the console exactly as it was.
 | `MYINVOIS_HTTP_RETRY_BASE_MS` | `1000` | |
 | `MYINVOIS_PRODUCTION_URL` | `https://api.myinvois.hasil.gov.my` | Override only for testing |
 | `MYINVOIS_SANDBOX_URL` | `https://preprod-api.myinvois.hasil.gov.my` | Ditto |
+| `MYINVOIS_AUDIT` | `false` | Keeps a durable record of what LHDN answered, one row per pair checked, in a table of its own — see [MyInvois verdicts](09-persistence.md#myinvois-verdicts) |
+| `MYINVOIS_AUDIT_TABLE` | `myinvois_validations` | A bare name: the connection adds its own prefix. Set it **before** the first migrate if the name is taken (below) |
+| `MYINVOIS_AUDIT_RETAIN_DAYS` | `400` | Days a verdict is kept after it was last checked; `xero-bridge:prune` enforces it |
+| `MYINVOIS_DB_CONNECTION` | default connection | The database connection the verdict table lives on |
 
-> **After upgrading**, if you published `config/myinvois.php`, re-publish it or hand-add any new keys.
-> `composer update` never touches a published config file, and Laravel's config merge is shallow at
-> the top level — so a key added inside `token` or `http` will be missing from your copy. See
-> [Updating](../README.md#your-published-config-is-never-updated).
+> **Upgrading.** There is nothing to re-publish. On every boot that is not running from a cached config,
+> the package adds any setting your published `config/myinvois.php` lacks, at any depth, with the
+> package's own value for it — its env variable when set, its default otherwise — so `composer update`
+> alone delivers a setting a later release adds inside `token`, `http` or any other block. A key you
+> already have is never changed, whatever its value. Two consequences: a line you delete comes back with
+> the package's value, so switch something off by setting it rather than deleting it; and under a config
+> cache built before the update, run `php artisan config:clear` (or `config:cache`) before a new setting
+> takes effect. See [Updating](../README.md#your-published-config-is-never-updated).
+
+### The verdict table
+
+`MYINVOIS_AUDIT=true` needs its table, which has a publish tag of its own, so the Xero migrations never
+bring a Malaysian tax table into a database that has no use for one:
+
+```bash
+php artisan vendor:publish --tag=myinvois-migrations
+php artisan migrate
+```
+
+If a table called `myinvois_validations` already exists on that connection — counting the connection's
+prefix — set `MYINVOIS_AUDIT_TABLE` to an unused, bare name **before** you migrate, in every environment:
+the package reads it at runtime too, not only when migrating. The migration will not adopt a same-named
+table it did not create. It checks for the columns it would have made and, when they are missing, stops
+before changing anything, naming the table, the columns it lacks and this setting. Laravel does not record
+it as run, so the next `migrate` resumes there once the name is free. A rollback likewise never drops a
+table this migration did not create.
+
+That check is in the migration as published from 1.5.0 on. A copy published earlier and not yet run lacks
+it; republish it first with `php artisan vendor:publish --tag=myinvois-migrations --force`, which rewrites
+it in place under the same filename.
 
 ---
 
@@ -257,6 +290,13 @@ portal/registration problem, not a code one — do not retry it.
 the pair is validated together, so a stale registration number — or one still in the pre-October-2019
 short format — fails even with a perfect TIN. Ask the buyer for their current SSM number and have
 them confirm HASiL holds it.
+
+**`migrate` stops at the MyInvois migration, saying the table "already exists, but it is not the table
+this migration creates".** Your database already has a table by that name, and the package did not
+create it. Nothing was changed. To keep that table, give the package another: set `MYINVOIS_AUDIT_TABLE`
+to an unused, bare name — the connection adds its own prefix — run `php artisan config:clear` if your
+config is cached, and migrate again. If the table is a leftover nothing uses, drop or rename it instead.
+See [The verdict table](#the-verdict-table).
 
 **cURL error 60, "self signed certificate in certificate chain".** This package offers no
 TLS-verification switch and will not add one: turning verification off in a statutory tax integration

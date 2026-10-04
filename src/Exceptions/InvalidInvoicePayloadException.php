@@ -28,14 +28,18 @@ class InvalidInvoicePayloadException extends XeroBridgeException
      * On update, omitting LineItemID deletes and recreates the line, and
      * omitting a line entirely deletes it -- so "partial update" is a lie for
      * LineItems, and the surprise is destructive.
+     *
+     * The message says CHAIN, not call: replacingLineItems() returns a copy,
+     * so a caller who invoked it as a statement and then hit this did call it.
      */
     public static function unsafeLineItems(): self
     {
         return new self(
             'Updating an invoice with LineItems is destructive: Xero deletes and recreates any '
             .'line missing a LineItemID, and deletes any line you leave out entirely. Include '
-            .'LineItemID on every line, or call replacingLineItems() to confirm you intend to '
-            .'replace them all.'
+            .'LineItemID on every line, or chain replacingLineItems() in front of the call -- '
+            .'invoices()->replacingLineItems()->update(...) -- to confirm you intend to replace '
+            .'them all. It returns a copy, so on its own line it does nothing.'
         );
     }
 }

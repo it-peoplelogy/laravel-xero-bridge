@@ -116,7 +116,12 @@ class XeroBridgeManager
         return $this->client()->request($method, $uri, $payload, $headers);
     }
 
-    /** The raw response, for PDFs and other non-JSON bodies. */
+    /**
+     * The undecoded Response -- status, headers and body -- for an endpoint the
+     * package has not wrapped. It is still requested as JSON: the client always
+     * sends Accept: application/json, so an invoice PDF comes from
+     * invoices()->pdf($id), not from here.
+     */
     public function raw(string $method, string $uri, array $payload = [], array $headers = []): Response
     {
         return $this->client()->send($method, $uri, $payload, $headers);

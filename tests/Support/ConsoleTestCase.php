@@ -11,14 +11,15 @@ use Peoplelogy\XeroBridge\Tests\TestCase;
  * enabled flag have to be decided before the application starts -- exactly as
  * for WebRoutesTestCase.
  *
- * `enabled` is pinned explicitly rather than left to the tri-state default.
- * The suite runs under APP_ENV=testing, which would switch the console on
- * anyway; pinning it means the gate tests own that behaviour instead of
- * inheriting it by accident.
+ * `enabled` is pinned to true, because the shipped default -- nothing set -- is
+ * off, and then no console route would be registered for these tests to reach.
+ * The gate tests flip it per request from here; what the shipped default
+ * registers at boot is proven separately, in tests/ConsoleUnset.
  *
  * `auth` is dropped for the same reason WebRoutesTestCase drops it: these
  * tests are about the console, not the host's authentication. That the
- * shipped default includes `auth` is asserted separately, in ConfigTest.
+ * shipped default includes `auth` is asserted separately, in
+ * tests/Unit/ConsoleConfigTest.php.
  */
 class ConsoleTestCase extends TestCase
 {

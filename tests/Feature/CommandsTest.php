@@ -4,11 +4,27 @@ declare(strict_types=1);
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\URL;
 use Peoplelogy\XeroBridge\Commands\RefreshTokensCommand;
 use Peoplelogy\XeroBridge\Commands\StatusCommand;
 use Peoplelogy\XeroBridge\Events\ConnectionExpired;
 use Peoplelogy\XeroBridge\Models\XeroConnection;
+
+afterEach(function () {
+    // xero-bridge:install really publishes, and under Testbench config_path()
+    // and database_path() point into the shared skeleton in vendor/. A copy
+    // left there is loaded by every later boot on this machine -- CI starts
+    // from a fresh vendor/ and never sees it -- so the local suite would
+    // quietly run against a published config of whatever age instead of the
+    // shipped one. Remove everything the install tests can have written.
+    File::delete([config_path('xero-bridge.php'), config_path('myinvois.php')]);
+
+    foreach (['*_create_xero_*_table.php', '*_create_myinvois_validations_table.php'] as $migration) {
+        File::delete(File::glob(database_path('migrations/'.$migration)) ?: []);
+    }
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -129,9 +145,9 @@ it('refreshes a fresh token when forced', function () {
 });
 
 it('NEVER clears a token on a transient failure', function () {
-    // The June-outage regression. In pips, any failed refresh truncates the
-    // token table, so one bad night takes the integration offline until a
-    // human reconnects through a browser.
+    // Regression guard. An integration that clears its tokens on a transient
+    // failure turns one bad night into an outage that lasts until a human
+    // reconnects through a browser.
     Event::fake([ConnectionExpired::class]);
     connection(['expires_at' => now()->addMinutes(5)]);
 
@@ -226,10 +242,17 @@ it('prints every required env key and the webhook url', function () {
 });
 
 it('warns when the app url is not https', function () {
-    config()->set('app.url', 'http://localhost');
+    // Through the URL generator: it took its root from APP_URL at boot, so
+    // changing app.url now would move nothing.
+    URL::forceRootUrl('http://app.example.test');
+    URL::forceScheme('http');
 
-    // Xero only delivers webhooks to https on port 443.
-    $this->artisan('xero-bridge:install')
-        ->expectsOutputToContain('https')
-        ->assertExitCode(0);
+    // The warning itself, not merely "https" -- every run prints
+    // https://developer.xero.com/myapps. Whitespace collapsed, because the
+    // warning box wraps at the terminal's width.
+    $output = (string) preg_replace('/\s+/', ' ', installCommandOutput());
+
+    expect($output)->toContain('http://app.example.test/xero/webhook')
+        ->toContain('Xero only delivers webhooks to https on port 443, so this URL will not work as-is. '
+            .'Set APP_URL to your public https address.');
 });

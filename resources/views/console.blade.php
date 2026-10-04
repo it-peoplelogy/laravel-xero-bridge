@@ -8,9 +8,14 @@
 
     Publish it with `--tag=xero-bridge-views` if you want to adapt it.
 
-    Writes into Xero are gated on the connected organisation being a Demo
-    Company or named in xero-bridge.console.writable_organisations; the two
-    actions under "Connection lifecycle" change local state only.
+    Off unless XERO_CONSOLE_ENABLED=true in the environment serving it,
+    whatever APP_ENV says. Writes into Xero are gated on the connected
+    organisation being a Demo Company or named in
+    xero-bridge.console.writable_organisations. Nothing else is: whoever gets
+    past the console's middleware can read that organisation's invoices and
+    contacts, and the two actions under "Connection lifecycle" change this
+    app's stored connection -- "forget" deletes it, which takes the
+    integration offline until someone reconnects.
 --}}
 <!DOCTYPE html>
 <html lang="en">
@@ -255,11 +260,11 @@
 <div class="ribbon">
     <div class="inner">
         <strong>Developer tool.</strong>
-        Reads run against whatever is connected. Everything that writes into Xero is refused unless that
-        organisation is an approved <strong>sandbox</strong>, and the two actions under <em>Connection lifecycle</em>
-        change local state only.
-        This page is off in production unless <code class="mono">XERO_CONSOLE_ENABLED=true</code>; set it to
-        <code class="mono">false</code> to turn it off everywhere.
+        This page is off unless <code class="mono">XERO_CONSOLE_ENABLED=true</code> in this environment.
+        Reads run against whatever is connected: anyone who gets past its middleware can read that organisation's
+        invoices and contacts. Everything that writes into Xero is refused unless the organisation is an approved
+        <strong>sandbox</strong>; the two actions under <em>Connection lifecycle</em> are not gated, and
+        <em>Forget connection</em> takes the integration offline until someone reconnects.
     </div>
 </div>
 
@@ -768,8 +773,12 @@
                         <span class="name">Delete stored connection</span>
                         <span class="endpoint mono">local row only</span>
                     </div>
-                    <p class="note">Removes the row from <code class="mono">{{ $boot['config']['table'] }}</code> so the consent flow can be replayed. Nothing is revoked at Xero.</p>
-                    <div class="fields"><button type="button" class="danger" data-run="connection.forget" data-confirm="Delete the stored connection row? You will have to reconnect.">Forget connection</button></div>
+                    <p class="note">
+                        Removes the row from <code class="mono">{{ $boot['config']['table'] }}</code> so the consent flow can be
+                        replayed. Until someone reconnects, every call through this connection fails: the integration is
+                        offline. Nothing is revoked at Xero, so the authorisation stays live there until it is removed in Xero.
+                    </p>
+                    <div class="fields"><button type="button" class="danger" data-run="connection.forget" data-confirm="Delete the stored connection row? The integration stays offline until someone reconnects.">Forget connection</button></div>
                 </div>
             </section>
 
@@ -876,6 +885,28 @@ Suggested order for a first run:
             : pill('route disabled', 'warn');
     }
 
+    /* How far the lock store's locks reach, as xero-bridge:status judges
+       it: by the store's class, never its name. Amber wherever status
+       warns. A file store XERO_LOCK_STORE names was chosen, and status
+       only notes it -- --strict ignores it -- so its pill is grey. Nothing
+       for a shared store, nor for one that cannot be resolved: the
+       Pre-flight panel reports that. */
+    function lockScope(c) {
+        var label = {
+            'one process': 'one process only',
+            'one server': 'one server only',
+            'none': 'no locking'
+        }[c.lock_scope];
+
+        if (!label) {
+            return '';
+        }
+
+        var chosen = c.lock_scope === 'one server' && c.lock_store_set;
+
+        return ' ' + pill(label, chosen ? 'mute' : 'warn');
+    }
+
     /* Minimal JSON syntax highlighting; the payloads are Xero's own. */
     function highlight(jsonText) {
         return esc(jsonText).replace(
@@ -953,10 +984,7 @@ Suggested order for a first run:
             ['Webhook URL',        url(u.webhook)],
             ['Table',              '<code class="mono">' + esc(c.table) + '</code>'],
             ['Default connection', '<code class="mono">' + esc(c.default_connection) + '</code>'],
-            ['Lock store',         '<code class="mono">' + esc(c.lock_store) + '</code>' +
-                                   (['array', 'file'].indexOf(c.lock_store) === -1
-                                       ? ''
-                                       : ' ' + pill('no cross-process lock', 'warn'))],
+            ['Lock store',         '<code class="mono">' + esc(c.lock_store) + '</code>' + lockScope(c)],
             ['Idempotency keys',   yesNo(c.idempotency)],
             ['Scopes',             '<code class="mono" style="font-size:11.5px">' + esc(c.scopes.join(' ')) + '</code>']
         ];
@@ -978,9 +1006,13 @@ Suggested order for a first run:
         }
 
         el.innerHTML = state.connections.map(function (c) {
+            /* Tokens this APP_KEY cannot decrypt fail every call, however
+               far off their expiry: red, as xero-bridge:status shows them. */
             var health = c.needs_reauthorisation
                 ? pill('needs reauthorisation', 'bad')
-                : (c.expired ? pill('access token expired', 'warn') : pill('healthy', 'ok'));
+                : (c.tokens_readable === false
+                    ? pill('tokens unreadable', 'bad')
+                    : (c.expired ? pill('access token expired', 'warn') : pill('healthy', 'ok')));
 
             var expiry = c.expires_at
                 ? esc(c.expires_at) + ' <span style="color:var(--muted)">(' + c.expires_in + 's)</span>'
