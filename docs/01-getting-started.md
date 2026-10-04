@@ -140,13 +140,15 @@ php artisan migrate
 `xero-bridge:install` publishes `config/xero-bridge.php` and the package's four migrations — for
 `xero_connections`, `xero_webhook_events`, `xero_write_records` and `xero_api_calls` — then prints every
 `.env` key you need, the exact redirect URI to register on the Xero app, the connect URL, whether the
-test console is on in this environment, and your webhook URL. Pass `--force` to overwrite files that
-already exist.
+test console is on in this environment, and your webhook URL — or, until `XERO_WEBHOOK_KEY` is set,
+that webhooks are off and how to turn them on. Pass `--force` to overwrite files that already exist.
 
 It also warns about what would otherwise fail later and less clearly: a webhook URL that is not https
 (Xero only delivers webhooks to https on port 443, so in practice an `APP_URL` that is not), a redirect
 URI Xero would refuse, a connect route — or a switched-on console — behind nothing more than `web,auth`,
 and the need to schedule `xero-bridge:refresh-tokens` with `withoutOverlapping()` and `onOneServer()`.
+The webhook URL is checked only once `XERO_WEBHOOK_KEY` is set: before that no webhook route is served,
+and the URL to register is printed as it is.
 `tests/Feature/CommandsTest.php` asserts the key list and the https warning;
 `tests/Feature/InstallCommandTest.php` covers the console, connect-route, webhook and redirect-URI
 output.
@@ -350,7 +352,7 @@ asserting the config file contains `env('XERO_CLIENT_ID')` and never `env('XERO_
 |---|---|---|
 | `XERO_ROUTES_ENABLED` | `true` | False removes `/xero/connect` and `/xero/callback`; the webhook and the test console have switches of their own. `php artisan route:cache` bakes in whatever this was **at cache time**, so a `.env` change without `route:clear` does nothing. |
 | `XERO_ROUTES_PREFIX` | `xero` | Changes the connect, callback and console paths — and the webhook's too, unless `XERO_WEBHOOK_PREFIX` gives it its own. Once the webhook URL is registered with Xero, moving it means re-entering it in the Xero app's Webhooks tab (Xero re-runs its intent-to-receive check) and rebuilding `route:cache`; until then delivery fails. |
-| `XERO_ROUTES_NAME_PREFIX` | `xero-bridge.` | Route names become `<prefix>connect`, `<prefix>callback`, `<prefix>webhook`, and `<prefix>console` with `<prefix>console.run` while the console is on. Change it and any `route('xero-bridge.connect')` in your own code breaks. |
+| `XERO_ROUTES_NAME_PREFIX` | `xero-bridge.` | Route names become `<prefix>connect`, `<prefix>callback`, `<prefix>webhook` while `XERO_WEBHOOK_KEY` is set, and `<prefix>console` with `<prefix>console.run` while the console is on. Change it and any `route('xero-bridge.connect')` in your own code breaks. |
 | `XERO_ROUTES_MIDDLEWARE` | `web,auth` | Comma separated, parsed into an array. **The flow needs a session** — that is where the OAuth state lives, and the browser comes back from Xero with cookies but no bearer token. Keep `web` (or anything else that starts a session), a session driver that persists between requests, and `SESSION_SAME_SITE=lax` rather than `strict`; otherwise every callback fails with "the link expired or your session changed". See [The flow needs a browser session](#the-flow-needs-a-browser-session). The default lets **any signed-in user** connect an organisation, or repoint an existing connection at one of their own, and `xero-bridge:install` warns about it: add authorisation here, e.g. `web,auth,can:manage-xero`. |
 | `XERO_AFTER_CONNECT_ROUTE` | none | A named route to send the user to after a connect attempt, successful or not, when neither a [`redirectAfterConnectUsing()`](#redirectafterconnectusing) closure nor a `return_to` decided. Ignored if the name is not registered. It must need no route parameters — the callback has none to give — or its URL cannot be built: that is reported and logged, and `XERO_AFTER_CONNECT_REDIRECT` is used instead. |
 | `XERO_AFTER_CONNECT_REDIRECT` | `/` | The path used when nothing above it decided. |
@@ -371,8 +373,8 @@ The full story is in [The test console](07-test-console.md).
 
 | Key | Default | What breaks if it is wrong |
 |---|---|---|
-| `XERO_WEBHOOK_KEY` | none | Unset or wrong: **every** webhook is rejected with a 401 and the signature check fails closed. `xero-bridge:status` warns when it is unset while webhooks are on. |
-| `XERO_WEBHOOKS_ENABLED` | `true` | Set it false when the application only calls Xero and never needs Xero to call it: `xero-bridge:status` then stops warning about `XERO_WEBHOOK_KEY`. Write `false` or `0` — `off` and `no` read as on. False unregisters the webhook route entirely; Xero's deliveries 404 and the subscription is disabled after 24 hours of failures. |
+| `XERO_WEBHOOK_KEY` | none | What turns webhooks on. Unset or empty: the webhook route is not registered, so a delivery gets a 404, and nothing warns — an application that only calls Xero needs no webhook setting at all. Without a key the endpoint could only fail closed, answering 401 to every delivery, so it is not served. Wrong: **every** webhook is rejected with a 401, because the signature check fails closed. Whether the route exists is decided when routes are registered, so rebuild `config:cache` and `route:cache` after setting or removing the key: a route cached while a key was set outlives the key, and then answers 401 to everything. |
+| `XERO_WEBHOOKS_ENABLED` | `true` | A kill switch: false unregisters the webhook route even with a key set; Xero's deliveries 404 and the subscription is disabled after 24 hours of failures. An application that only calls Xero does not need it, since leaving the key unset already serves no route. Write `false` or `0` — `off` and `no` read as on. |
 | `XERO_WEBHOOK_PREFIX` | none — follows `XERO_ROUTES_PREFIX` | The webhook's own prefix, in place of `XERO_ROUTES_PREFIX`: `api/v1/xero` serves it at `/api/v1/xero/webhook` while connect, callback and the console stay where they are. Unset or empty follows `XERO_ROUTES_PREFIX`, so a bare `XERO_WEBHOOK_PREFIX=` moves nothing; `/` means the site root, `/webhook`. The route keeps its name and its cookieless middleware under any prefix. Moving it means re-entering the URL in the Xero app's Webhooks tab — Xero re-runs its intent-to-receive check — and rebuilding `route:cache`. |
 | `XERO_WEBHOOK_PATH` | `webhook` | Appended to the webhook's prefix: `XERO_WEBHOOK_PREFIX` when set, otherwise `XERO_ROUTES_PREFIX`. A leading slash is trimmed rather than read as absolute, so `/webhook` still means `/xero/webhook`. Changing it after registering the URL with Xero breaks delivery until you re-enter it there. |
 | `XERO_WEBHOOK_QUEUE` | default queue | The queue the envelope job is pushed onto. |
@@ -469,7 +471,9 @@ XERO_REDIRECT_URI="${APP_URL}/xero/callback"
 # need -- see Scopes above for an invoice-only set.
 XERO_SCOPES="openid profile email offline_access accounting.invoices accounting.payments accounting.contacts accounting.settings accounting.attachments"
 
-# From the Xero app's Webhooks tab. Leave blank to reject all webhooks.
+# Webhooks are Xero calling this application. While this is blank no webhook
+# route is served, so an application that only calls Xero leaves it out. To
+# receive them, paste the key from the Xero app's Webhooks tab.
 XERO_WEBHOOK_KEY=
 
 # Holds the token-refresh and webhook-retry locks. array locks within one
@@ -617,7 +621,7 @@ incomplete, the connections table missing, unreadable or not the package's own, 
 stored tokens the current `APP_KEY` cannot decrypt (shown as `unreadable` in the Token column); `2` at
 least one connection needs re-authorising. `--json` emits a machine-readable dump, and a test asserts no
 token ever appears in it. `--strict` also returns `1` for any warning, or a lock pre-flight that did not
-pass — no webhook key, an `array` lock store or a `file` one left as the unchosen default (a `file` store
+pass — an `array` lock store or a `file` one left as the unchosen default (a `file` store
 that `XERO_LOCK_STORE` names is only a note), recent transient failures, write-ledger
 claims stuck pending, a package migration recorded twice, among others;
 [Commands, errors and token lifecycle](05-commands-and-errors.md) lists every one. Warnings print even

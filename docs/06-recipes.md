@@ -1383,10 +1383,12 @@ what reaches Xero:
 
 Testing the webhook endpoint and its listeners — posting raw signed bytes, then running
 `ProcessXeroWebhook` directly — is covered in
-[Webhooks and events](04-webhooks-and-events.md#testing-webhooks). One thing to know when
-you post: under `Queue::fake()` the job never runs, so its uniqueness lock is never
-released within that test, and posting the same events twice queues **one** job, not two
-(`tests/Feature/WebhookUniqueLockTest.php`). Different events still queue separately.
+[Webhooks and events](04-webhooks-and-events.md#testing-webhooks). Two things to know when
+you post. The route is registered only when `XERO_WEBHOOK_KEY` is set as the application
+boots, so put the key in `phpunit.xml`: a `config()->set()` inside the test comes too late,
+and the post gets a 404. And under `Queue::fake()` the job never runs, so its uniqueness lock
+is never released within that test, and posting the same events twice queues **one** job,
+not two (`tests/Feature/WebhookUniqueLockTest.php`). Different events still queue separately.
 
 ### Notes and gotchas
 

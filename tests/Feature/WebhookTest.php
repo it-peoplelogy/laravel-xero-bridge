@@ -106,7 +106,11 @@ it('rejects a missing signature header with 401', function () {
     Queue::assertNothingPushed();
 });
 
-it('fails closed when no webhook key is configured', function () {
+it('fails closed when the key is gone but a stale route:cache still serves the route', function () {
+    // Booted without a key there is no route at all (tests/WebhookKeyUnset).
+    // A route:cache built while a key was set keeps the route after the key
+    // is removed, so the controller still has to refuse what it cannot
+    // verify. Nulled after boot, which leaves the route exactly so.
     config()->set('xero-bridge.webhook_key', null);
     $raw = eventsPayload();
 

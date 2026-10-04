@@ -423,9 +423,10 @@ final class Diagnostics
         array_push($warnings, ...$this->ledgerWarnings($ledger, $recorded));
         array_push($warnings, ...$this->duplicateMigrations($recorded));
 
-        if ($this->config->webhookKey() === null && $this->config->get('webhooks.enabled', true)) {
-            $warnings[] = 'No XERO_WEBHOOK_KEY is set, so every webhook will be rejected with a 401.';
-        }
+        // Nothing about a missing XERO_WEBHOOK_KEY. Without one no webhook
+        // route is served (XeroConfig::webhooksActive()), which is exactly
+        // what an application that only calls Xero wants: webhooks off is a
+        // state, not a fault, and --strict must not fail every such install.
 
         $scope = $this->lockScope();
         $store = $this->lockStoreName();
@@ -541,6 +542,8 @@ final class Diagnostics
             'default_connection' => $this->config->defaultConnection(),
             'table' => $this->tableName(self::CONNECTIONS_TABLE, 'xero_connections'),
             'routes_enabled' => (bool) $this->config->get('routes.enabled', true),
+            // The flag as set, as it has always been reported. Whether a
+            // webhook route is served also takes a key: webhook_key_set.
             'webhooks_enabled' => (bool) $this->config->get('webhooks.enabled', true),
             'lock_store' => $this->lockStoreName(),
             'idempotency' => (bool) $this->config->get('http.idempotency', true),
@@ -553,8 +556,13 @@ final class Diagnostics
      * Every URL the integration exposes.
      *
      * Route::has() guarded throughout: a host that sets routes.enabled=false or
-     * webhooks.enabled=false has no such named route, and an unguarded route()
-     * would turn a diagnostics page into a 500.
+     * webhooks.enabled=false, or sets no XERO_WEBHOOK_KEY, has no such named
+     * route, and an unguarded route() would turn a diagnostics page into a 500.
+     *
+     * The webhook's is judged by XeroConfig::webhooksActive() as well, the
+     * rule the route was registered by: a route:cache built while a key was
+     * set still carries the route once the key is gone, and a URL that can
+     * only answer 401 is not one to register with Xero.
      *
      * @return array<string, string|null>
      */
@@ -563,7 +571,7 @@ final class Diagnostics
         return [
             'connect' => $this->config->connectUrl($this->config->defaultConnection()),
             'callback' => $this->urlFor('callback'),
-            'webhook' => $this->urlFor('webhook'),
+            'webhook' => $this->config->webhooksActive() ? $this->urlFor('webhook') : null,
             'console' => $this->urlFor('console'),
         ];
     }

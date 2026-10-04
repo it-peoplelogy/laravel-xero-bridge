@@ -26,7 +26,8 @@ All four commands are registered by the service provider; there is nothing to wi
 ### `xero-bridge:install`
 
 Publishes `config/xero-bridge.php` and the package's Xero migrations, then prints the `.env` keys, the
-redirect URI and connect URL, what the test console will do in this environment, and the webhook URL.
+redirect URI and connect URL, what the test console will do in this environment, and the webhook URL —
+or, with no `XERO_WEBHOOK_KEY`, that webhooks are off and how to turn them on.
 
 ```text
 php artisan xero-bridge:install [--force]
@@ -75,8 +76,8 @@ Test console: off (XERO_CONSOLE_ENABLED is not set)
   Turn it on with XERO_CONSOLE_ENABLED=true in the .env of the environment that should have it.
   It would be served at https://app.example.com/xero/console, behind: web, auth
 
-Webhook URL (paste into the Xero app's Webhooks tab):
-  https://app.example.com/xero/webhook
+Webhooks are off: no XERO_WEBHOOK_KEY is set, so no webhook route is served. An application that only calls Xero needs nothing more.
+  To receive webhooks, register https://app.example.com/xero/webhook in your Xero app's Webhooks tab, put the key Xero shows into XERO_WEBHOOK_KEY, rebuild config:cache and route:cache, then press Send "Intent to receive".
 
    WARN  Schedule xero-bridge:refresh-tokens with ->withoutOverlapping()->onOneServer(). Xero rotates
    refresh tokens, so two concurrent refreshes invalidate each other.
@@ -95,8 +96,15 @@ Test console: ON (XERO_CONSOLE_ENABLED=true)
    XERO_CONSOLE_MIDDLEWARE="web,auth,can:manage-xero".
 ```
 
-With `APP_URL=http://app.test` and no `XERO_REDIRECT_URI` — a local host that is not `localhost` — two
-more warnings appear, one after step 4 and one after the webhook URL:
+With `XERO_WEBHOOK_KEY` set, the webhook block reads instead:
+
+```text
+Webhook URL (paste into the Xero app's Webhooks tab):
+  https://app.example.com/xero/webhook
+```
+
+With `APP_URL=http://app.test` and no `XERO_REDIRECT_URI` — a local host that is not `localhost` — a
+warning appears after step 4, and, once `XERO_WEBHOOK_KEY` is set, another after the webhook URL:
 
 ```text
   3. Register this redirect URI on it, exactly:
@@ -163,11 +171,22 @@ Webhook URL (paste into the Xero app's Webhooks tab):
   other stack is taken to be your own decision. The connect-route warning follows the same two cases. A route cache
   built while the console was off still has no console route, so the page 404s until
   `php artisan route:clear` even though this says `ON`. See [The test console](07-test-console.md).
-- The webhook URL is the registered route's own URL. When that route is not registered it is built by the
-  same rule the route uses: `XERO_WEBHOOK_PREFIX`, or `routes.prefix` when that is unset or empty, plus
-  `webhooks.path` — so it moves with `XERO_ROUTES_PREFIX` unless `XERO_WEBHOOK_PREFIX` is set. With
-  `XERO_WEBHOOKS_ENABLED=false` the block is one line instead: "Webhooks are disabled, so there is no
-  webhook URL to register. Set XERO_WEBHOOKS_ENABLED=true to serve one."
+- The webhook block takes one of three forms, by the same rule that decides whether the route is
+  registered:
+  - **`XERO_WEBHOOK_KEY` set** — the URL to paste into the Xero app. It is the registered route's
+    own URL; when that route is not registered — a `route:cache` built before the key was set — it is
+    built by the same rule the route uses: `XERO_WEBHOOK_PREFIX`, or `routes.prefix` when that is unset
+    or empty, plus `webhooks.path`, so it moves with `XERO_ROUTES_PREFIX` unless `XERO_WEBHOOK_PREFIX`
+    is set. This is the only form that warns about a URL that is not https.
+  - **No `XERO_WEBHOOK_KEY`**, the shipped default — no webhook route is served, and the block says so:
+    "Webhooks are off: no XERO_WEBHOOK_KEY is set, so no webhook route is served. An application that
+    only calls Xero needs nothing more." The indented line after it says how to turn webhooks on: "To
+    receive webhooks, register {URL} in your Xero app's Webhooks tab, put the key Xero shows into
+    XERO_WEBHOOK_KEY, rebuild config:cache and route:cache, then press Send "Intent to receive"." — the
+    URL built by that same rule, printed as it is. Neither line is a warning: an application that only
+    calls Xero has nothing to do.
+  - **`XERO_WEBHOOKS_ENABLED=false`**, whatever the key — one line:
+    "Webhooks are disabled (XERO_WEBHOOKS_ENABLED=false), so there is no webhook URL to register."
 - Run again, with or without `--force`, it publishes any migration of the tag you have never published,
   under a fresh timestamp: a new table to migrate. `--force` also rewrites the ones already published in
   place, under their existing filenames, so `migrate` does not run those again.
@@ -355,7 +374,6 @@ undecryptable tokens on a connection that is not invalidated.
 | The write ledger is on and its table does not exist, or could not be checked | WARN |
 | Write claims pending for over an hour | WARN — the same line `xero-bridge:prune` prints |
 | A package table the `migrations` table records as created more than once | WARN: rolling back the later batch would drop the live table |
-| No `XERO_WEBHOOK_KEY` while webhooks are enabled | WARN: every webhook will be rejected with a 401 |
 | The lock store is an `array` store, named or the default | WARN: it locks inside one process only |
 | The lock store is a `file` store that is only the default — `XERO_LOCK_STORE` unset or blank | WARN: it locks within one server only |
 | A connection with recent transient failures, and not invalidated | WARN |
@@ -372,6 +390,8 @@ Never counted, even under `--strict`:
 - the test-console line;
 - a webhook-replay or capture table that is merely missing: a flag with no table is a documented no-op,
   and nothing about it is reported;
+- no `XERO_WEBHOOK_KEY`. Without a key no webhook route is served — webhooks are off, which is not a
+  fault — so nothing about it is reported. Before 1.6.0 it was a warning;
 - MyInvois, which status never reports on;
 - "No Xero organisations are connected." Nothing connected is not a failure.
 

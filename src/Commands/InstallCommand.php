@@ -289,17 +289,35 @@ class InstallCommand extends Command
     }
 
     /**
-     * The webhook URL, from the route when it is registered -- which is what
-     * Xero will actually be answered from -- and from the same rule the route
-     * file uses when it is not. Nothing to print when webhooks are off.
+     * Whether a webhook URL is served, decided by the rule the provider
+     * registers the route by -- XeroConfig::webhooksActive() -- never by
+     * Route::has(): a route cache built while a key was set carries the
+     * route past the key's removal.
+     *
+     * Served, the URL comes from the route when it is registered -- which is
+     * what Xero will actually be answered from -- and from the same rule the
+     * route file uses when it is not. With no key there is no route, so the
+     * URL to register, the first step of setting webhooks up, comes from that
+     * rule too.
      */
     private function webhookSummary(XeroConfig $config): void
     {
         $this->gap();
 
         if (! (bool) $config->get('webhooks.enabled', true)) {
-            $this->line('Webhooks are disabled, so there is no webhook URL to register. '
-                .'Set <fg=yellow>XERO_WEBHOOKS_ENABLED=true</> to serve one.');
+            $this->line('Webhooks are disabled (XERO_WEBHOOKS_ENABLED=false), so there is no webhook URL to register.');
+
+            return;
+        }
+
+        if (! $config->webhooksActive()) {
+            // A plain line, not a warning, and no https check: an application
+            // that only calls Xero is the usual install, and has nothing to do.
+            $this->line('Webhooks are off: no XERO_WEBHOOK_KEY is set, so no webhook route is served. '
+                .'An application that only calls Xero needs nothing more.');
+            $this->line('  To receive webhooks, register <fg=cyan>'.url($config->webhookUri()).'</> in your Xero '
+                .'app\'s Webhooks tab, put the key Xero shows into <fg=yellow>XERO_WEBHOOK_KEY</>, rebuild '
+                .'config:cache and route:cache, then press Send "Intent to receive".');
 
             return;
         }

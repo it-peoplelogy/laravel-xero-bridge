@@ -49,9 +49,33 @@ final class XeroConfig
 
     public function webhookKey(): ?string
     {
-        $value = $this->get('webhook_key');
+        // env() reads XERO_WEBHOOK_KEY=false as bool false, and (string) false
+        // is ''. That has to read as no key -- a key is what serves the webhook
+        // route, so a key "switched off" that way must not keep it.
+        $value = (string) ($this->get('webhook_key') ?? '');
 
-        return ($value === null || $value === '') ? null : (string) $value;
+        return $value === '' ? null : $value;
+    }
+
+    /**
+     * Whether the webhook endpoint is served at all: webhooks.enabled is on
+     * AND a signing key is set. The one place the rule lives, so the provider
+     * that registers the route and everything that reports on it cannot
+     * disagree.
+     *
+     * No key, no route. Without a key the endpoint fails closed -- it could
+     * only answer 401 to every delivery -- so serving it would add an open
+     * endpoint and nothing else, and an application that only calls Xero
+     * would need a setting just to be rid of it. webhooks.enabled keeps its
+     * meaning as the kill switch: false serves no route even with a key.
+     *
+     * Decided at boot, like every route flag: a route:cache built while a key
+     * was set keeps the route after the key is removed, and one built without
+     * a key still lacks it once one is set, until route:cache is rebuilt.
+     */
+    public function webhooksActive(): bool
+    {
+        return (bool) $this->get('webhooks.enabled', true) && $this->webhookKey() !== null;
     }
 
     public function endpoint(string $name): string

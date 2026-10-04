@@ -56,8 +56,9 @@ it('fills the status panels on first paint', function () {
 
 it('reports a URL as unavailable rather than throwing when its route is gone', function () {
     // Route::has() guards. A host that sets XERO_ROUTES_ENABLED=false or
-    // XERO_WEBHOOKS_ENABLED=false has no such named route, and an unguarded
-    // route() would turn the console into a 500 on page load.
+    // XERO_WEBHOOKS_ENABLED=false, or no XERO_WEBHOOK_KEY, has no such named
+    // route, and an unguarded route() would turn the console into a 500 on
+    // page load.
     //
     // Those flags are read at boot, so they cannot be flipped from here.
     // Renaming the lookup prefix reaches the same branch: no route answers to

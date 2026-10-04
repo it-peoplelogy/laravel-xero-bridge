@@ -24,6 +24,12 @@ use Peoplelogy\XeroBridge\Support\XeroConfig;
 | There is no CSRF token here either, which is correct: the HMAC signature is
 | the authentication.
 |
+| Loaded only while XeroConfig::webhooksActive(): webhooks.enabled on AND a
+| XERO_WEBHOOK_KEY set. With no key there is nothing a delivery could be
+| verified against, so an application that only calls Xero serves no
+| endpoint at all. The controller still answers 401 without a key, for the
+| route a stale route:cache can carry past that check.
+|
 | The URI is routes.prefix + webhooks.path, unless webhooks.prefix replaces
 | the first half (XeroConfig::webhookUri() holds the rule). The stack below
 | goes wherever the URI goes: under an `api/...` prefix it still gets no

@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Peoplelogy\XeroBridge\Contracts\ConnectionRepository;
@@ -325,11 +326,17 @@ it('flags a connection that needs reauthorising', function () {
 |--------------------------------------------------------------------------
 */
 
-it('warns when no webhook key is set', function () {
+it('says nothing about a missing webhook key: webhooks are off, which is not a fault', function () {
+    // No key, no route (XeroConfig::webhooksActive()) -- what an application
+    // that only calls Xero runs with. Removing the key must change nothing
+    // here: no warning, and no note in its place.
+    $withKey = diagnostics()->warnings([]);
+
     config()->set('xero-bridge.webhook_key', null);
 
-    expect(diagnostics()->warnings([]))
-        ->toContain('No XERO_WEBHOOK_KEY is set, so every webhook will be rejected with a 401.');
+    expect(diagnostics()->warnings([]))->toBe($withKey)
+        ->and(implode(' ', diagnostics()->warnings([])))->not->toContain('XERO_WEBHOOK_KEY')
+        ->and(diagnostics()->notes())->toBe([]);
 });
 
 it('warns when the default cache store only locks within one server', function () {
@@ -652,8 +659,9 @@ it('never puts a token in the console snapshot', function () {
 });
 
 it('returns null for a URL whose route is not registered', function () {
-    // A host may set routes.enabled=false or webhooks.enabled=false. Without
-    // the Route::has() guards, route() would throw and take the page with it.
+    // A host may set routes.enabled=false or webhooks.enabled=false, or leave
+    // XERO_WEBHOOK_KEY unset. Without the Route::has() guards, route() would
+    // throw and take the page with it.
     config()->set('xero-bridge.routes.name_prefix', 'nope.');
 
     $urls = diagnostics()->urls();
@@ -662,6 +670,18 @@ it('returns null for a URL whose route is not registered', function () {
         ->and($urls['webhook'])->toBeNull()
         // connectUrl() falls back to a plain path, so guidance stays useful.
         ->and($urls['connect'])->toBe('/xero/connect/default');
+});
+
+it('reports no webhook URL once the key is gone, though a stale route still serves it', function () {
+    // A route:cache built while a key was set carries the route past the
+    // key's removal -- nulled after boot, the route is left exactly so. A URL
+    // that can only answer 401 is not one to register with Xero.
+    expect(diagnostics()->urls()['webhook'])->toEndWith('/xero/webhook');
+
+    config()->set('xero-bridge.webhook_key', null);
+
+    expect(Route::has('xero-bridge.webhook'))->toBeTrue()
+        ->and(diagnostics()->urls()['webhook'])->toBeNull();
 });
 
 /*

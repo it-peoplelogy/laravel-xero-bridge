@@ -341,7 +341,9 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
 
         // Separate file and separate flag: the webhook route must carry no
         // session and no cookies, which the connect/callback routes require.
-        if ($this->app['config']->get('xero-bridge.webhooks.enabled', true)) {
+        // And no key, no route: without one the endpoint could only answer
+        // 401 to every delivery. XeroConfig::webhooksActive() holds the rule.
+        if ($this->app->make(XeroConfig::class)->webhooksActive()) {
             $this->loadRoutesFrom(__DIR__.'/../routes/webhook.php');
         }
 

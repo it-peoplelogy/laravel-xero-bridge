@@ -12,7 +12,9 @@ use Peoplelogy\XeroBridge\Tests\Support\ConsoleDisabledTestCase;
 use Peoplelogy\XeroBridge\Tests\Support\ConsoleTestCase;
 use Peoplelogy\XeroBridge\Tests\Support\ConsoleUnsetTestCase;
 use Peoplelogy\XeroBridge\Tests\Support\CustomPrefixTestCase;
+use Peoplelogy\XeroBridge\Tests\Support\WebhookKeyUnsetTestCase;
 use Peoplelogy\XeroBridge\Tests\Support\WebhookPrefixTestCase;
+use Peoplelogy\XeroBridge\Tests\Support\WebhooksDisabledTestCase;
 use Peoplelogy\XeroBridge\Tests\Support\WebRoutesTestCase;
 use Peoplelogy\XeroBridge\Tests\TestCase;
 
@@ -31,6 +33,8 @@ uses(ConsoleTestCase::class)->in('Console');
 uses(ConsoleDisabledTestCase::class)->in('ConsoleDisabled');
 uses(ConsoleUnsetTestCase::class)->in('ConsoleUnset');
 uses(WebhookPrefixTestCase::class)->in('WebhookPrefix');
+uses(WebhookKeyUnsetTestCase::class)->in('WebhookKeyUnset');
+uses(WebhooksDisabledTestCase::class)->in('WebhooksDisabled');
 
 /*
 |--------------------------------------------------------------------------

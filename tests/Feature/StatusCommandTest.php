@@ -427,20 +427,35 @@ it('treats a file lock store chosen explicitly as a note, not a warning', functi
 
 it('prints its warnings even when nothing is connected', function () {
     // It used to return before the warnings, so --strict could exit 1 with
-    // no reason given anywhere.
-    healthyLockStore();
-    config()->set('xero-bridge.webhook_key', null);
-
+    // no reason given anywhere. The suite's array cache is the warning.
     [$exit, $output] = statusRun();
 
     expect($exit)->toBe(0)
         ->and($output)->toContain('No Xero organisations are connected')
-        ->toContain('No XERO_WEBHOOK_KEY is set');
+        ->toContain('only locks inside one process');
 
     [$exit, $output] = statusRun(['--strict' => true]);
 
     expect($exit)->toBe(StatusCommand::EXIT_CONFIG_INCOMPLETE)
-        ->and($output)->toContain('No XERO_WEBHOOK_KEY is set');
+        ->and($output)->toContain('only locks inside one process');
+});
+
+it('says nothing about a missing webhook key, so --strict passes without one', function () {
+    // No key means no webhook route -- what an application that only calls
+    // Xero wants -- so it is neither a warning nor a note. Nulled after boot,
+    // the route registered with the key is still here, as under a stale
+    // route:cache; tests/WebhookKeyUnset boots without one.
+    healthyLockStore();
+    connection();
+    config()->set('xero-bridge.webhook_key', null);
+
+    [$exit, $output] = statusRun(['--strict' => true]);
+
+    expect($exit)->toBe(0)
+        ->and($output)->not->toContain('XERO_WEBHOOK_KEY')
+        ->not->toContain('WARN');
+
+    expect(statusJson())->toMatchArray(['warnings' => [], 'notes' => []]);
 });
 
 it('puts a connection that needs re-authorising ahead of --strict', function () {

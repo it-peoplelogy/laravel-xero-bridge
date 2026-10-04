@@ -167,7 +167,6 @@ Below them come the warnings — the same list `xero-bridge:status` prints:
 - the write ledger on with its table missing or unreadable, or with claims pending for over an hour;
 - a package table that the `migrations` table records as created more than once — rolling back the later
   batch would drop the live table;
-- no `XERO_WEBHOOK_KEY` while webhooks are enabled;
 - a lock store whose locks do not reach far enough: `array` (one process), or `file` as a default nobody
   chose (one server);
 - connections with recent transient failures;
@@ -415,9 +414,13 @@ Run `php artisan route:clear`, or rebuild it with `php artisan route:cache`.
 **A value reads `[redacted]`.** That is deliberate: credentials and bank details are masked out of every
 response. See [What it never shows you](#what-it-never-shows-you).
 
-**Connect URL, Callback URL or Webhook URL reads "route disabled".** That route group is switched off —
-`XERO_ROUTES_ENABLED` or `XERO_WEBHOOKS_ENABLED`. The console reports it rather than failing, so the rest
-of the page still works.
+**Connect URL or Callback URL reads "route disabled".** That route is not served: `XERO_ROUTES_ENABLED`
+is off. The console reports it rather than failing, so the rest of the page still works.
+
+**Webhook URL reads "off", in grey.** No webhook route is served. Usually no `XERO_WEBHOOK_KEY` is set —
+the route exists only once one is, which is all an application that only calls Xero needs, so the
+`XERO_WEBHOOK_KEY` row is grey too, not amber. Otherwise `XERO_WEBHOOKS_ENABLED` is off, and the row
+says so.
 
 **Every write is refused.** That is the write guard. Confirm which organisation you are connected to with
 *Reference lookups → Organisation* and check `IsDemoCompany`. See [The write guard](#the-write-guard).

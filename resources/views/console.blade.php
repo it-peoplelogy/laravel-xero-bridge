@@ -972,16 +972,22 @@ Suggested order for a first run:
         var rows = [
             ['XERO_CLIENT_ID',     yesNo(c.client_id_set)],
             ['XERO_CLIENT_SECRET', yesNo(c.client_secret_set)],
+            /* Grey, not amber: no key means no webhook route, which is all an
+               application that only calls Xero needs -- a state, not a fault. */
             ['XERO_WEBHOOK_KEY',   c.webhook_key_set
                 ? pill('set', 'ok')
-                : pill('not set', 'warn') + ' <span style="color:var(--muted)">webhook handling is off</span>'],
+                : pill('not set', 'mute') + ' <span style="color:var(--muted)">webhooks off — only needed if Xero calls this application</span>'],
             ['offline_access',     c.has_offline_access
                 ? pill('granted', 'ok')
                 : pill('MISSING', 'bad') + ' <span style="color:var(--muted)">the connection would die after 30 minutes</span>'],
             ['Redirect URI',       '<code class="mono">' + esc(c.redirect_uri) + '</code>'],
             ['Connect URL',        url(u.connect)],
             ['Callback URL',       url(u.callback)],
-            ['Webhook URL',        url(u.webhook)],
+            ['Webhook URL',        u.webhook
+                ? url(u.webhook)
+                : pill('off', 'mute') + ' <span style="color:var(--muted)">' +
+                  (c.webhooks_enabled ? 'served only while XERO_WEBHOOK_KEY is set' : 'XERO_WEBHOOKS_ENABLED=false') +
+                  '</span>'],
             ['Table',              '<code class="mono">' + esc(c.table) + '</code>'],
             ['Default connection', '<code class="mono">' + esc(c.default_connection) + '</code>'],
             ['Lock store',         '<code class="mono">' + esc(c.lock_store) + '</code>' + lockScope(c)],

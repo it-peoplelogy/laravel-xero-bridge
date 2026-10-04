@@ -309,13 +309,41 @@ it('does not warn about the connect route when there is nothing to warn about', 
 |--------------------------------------------------------------------------
 */
 
-it('says webhooks are disabled instead of printing a URL', function () {
+it('says webhooks are disabled instead of printing a URL', function (?string $key) {
+    // The switch outranks the key: with or without one, nothing to register.
     config()->set('xero-bridge.webhooks.enabled', false);
+    config()->set('xero-bridge.webhook_key', $key);
 
     expect(installCommandOutput())
-        ->toContain('Webhooks are disabled')
+        ->toContain("\nWebhooks are disabled (XERO_WEBHOOKS_ENABLED=false), so there is no webhook URL to register.\n")
+        // Turning the switch back on is no longer enough on its own.
+        ->not->toContain('XERO_WEBHOOKS_ENABLED=true')
+        ->not->toContain('Webhooks are off')
         ->not->toContain('/xero/webhook')
         ->not->toContain('Xero only delivers webhooks to https');
+})->with([
+    'with a key' => ['test-webhook-key'],
+    'with no key' => [null],
+]);
+
+it('says webhooks are off when no key is set, and how to receive them', function () {
+    // Decided by the rule, not by Route::has(): the route registered at boot
+    // is still here -- as a route:cache built while a key was set keeps it --
+    // and must not turn this back into a URL to paste.
+    installOnPublicHost();
+    config()->set('xero-bridge.webhook_key', null);
+
+    expect(Route::has('xero-bridge.webhook'))->toBeTrue()
+        ->and(installCommandOutput())
+        ->toContain(
+            "\nWebhooks are off: no XERO_WEBHOOK_KEY is set, so no webhook route is served. "
+            ."An application that only calls Xero needs nothing more.\n"
+            .'  To receive webhooks, register https://app.example.test/xero/webhook in your Xero app\'s '
+            .'Webhooks tab, put the key Xero shows into XERO_WEBHOOK_KEY, rebuild config:cache and '
+            ."route:cache, then press Send \"Intent to receive\".\n"
+        )
+        ->not->toContain('Webhook URL (paste into')
+        ->not->toContain('Webhooks are disabled');
 });
 
 it('prints the webhook route Xero will actually be answered from', function () {
@@ -326,8 +354,10 @@ it('prints the webhook route Xero will actually be answered from', function () {
     config()->set('xero-bridge.webhooks.prefix', 'api/hooks');
 
     expect(installCommandOutput())
-        ->toContain("\n  https://app.example.test/xero/webhook\n")
+        ->toContain("\nWebhook URL (paste into the Xero app's Webhooks tab):\n  https://app.example.test/xero/webhook\n")
         ->not->toContain('/api/hooks/webhook')
+        ->not->toContain('Webhooks are off')
+        ->not->toContain('Webhooks are disabled')
         ->not->toContain('Xero only delivers webhooks to https');
 });
 
@@ -337,7 +367,8 @@ it('builds the webhook URL by the route file\'s rule when the route is not regis
     config()->set('xero-bridge.routes.name_prefix', 'unregistered.');
     config()->set('xero-bridge.webhooks.prefix', 'api/hooks');
 
-    expect(installCommandOutput())->toContain("\n  https://app.example.test/api/hooks/webhook\n");
+    expect(installCommandOutput())
+        ->toContain("\nWebhook URL (paste into the Xero app's Webhooks tab):\n  https://app.example.test/api/hooks/webhook\n");
 });
 
 /*
