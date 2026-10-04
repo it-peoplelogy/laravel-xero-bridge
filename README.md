@@ -537,9 +537,6 @@ lists every key.
 | `XERO_CLIENT_ID` | yes | From your Xero app. |
 | `XERO_CLIENT_SECRET` | yes | Shown once at creation. A wrong value fails as `invalid_client`, not as an expired connection. |
 | `XERO_REDIRECT_URI` | yes | Must match the app exactly. https, except `http://localhost`. |
-| `XERO_WEBHOOK_KEY` | if using webhooks | From the app's Webhooks tab. It is what turns webhooks on: unset, no webhook route is registered, which is all an application that only calls Xero needs. Rebuild `config:cache` and `route:cache` after setting or removing it. See [Webhooks](#webhooks). |
-| `XERO_WEBHOOK_PREFIX` | no | The webhook's own prefix, in place of `XERO_ROUTES_PREFIX`: `api/v1/xero` serves it at `/api/v1/xero/webhook`, and `/` at the site root. Unset or empty follows `XERO_ROUTES_PREFIX`. Moving the URL means re-entering it in the Xero app and rebuilding `route:cache`. |
-| `XERO_WEBHOOK_UNKNOWN_TENANTS` | no | `dispatch` (the default) or `ignore`: whether events for an organisation with no stored connection here reach your listeners. See [Webhooks](#webhooks). |
 | `XERO_SCOPES` | no | Space separated. Must include `offline_access`. The default is broad — see [Scopes](#scopes). |
 | `XERO_DEFAULT_CONNECTION` | no | Defaults to `default`. |
 | `XERO_ROUTES_ENABLED` | no | Defaults to true. `route:cache` bakes in whatever this was at cache time. |
@@ -573,15 +570,6 @@ XERO_REDIRECT_URI="${APP_URL}/xero/callback"
 
 # Granular scopes. offline_access is mandatory or you get no refresh token.
 XERO_SCOPES="openid profile email offline_access accounting.invoices accounting.payments accounting.contacts accounting.settings accounting.attachments"
-
-# Webhooks are Xero calling this application. While this is blank no webhook
-# route is served, so an application that only calls Xero needs neither line.
-# To receive them, paste the key from the Xero app's Webhooks tab.
-XERO_WEBHOOK_KEY=
-# Events for an organisation with no stored connection here -- one connected
-# to the same Xero app from another environment, say. dispatch (the default)
-# hands them to your listeners like any other; ignore skips them first.
-XERO_WEBHOOK_UNKNOWN_TENANTS=dispatch
 
 # The cache store for the token-refresh and webhook-retry locks. array locks
 # only inside one process and file only within one server -- with more than

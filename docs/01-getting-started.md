@@ -471,11 +471,6 @@ XERO_REDIRECT_URI="${APP_URL}/xero/callback"
 # need -- see Scopes above for an invoice-only set.
 XERO_SCOPES="openid profile email offline_access accounting.invoices accounting.payments accounting.contacts accounting.settings accounting.attachments"
 
-# Webhooks are Xero calling this application. While this is blank no webhook
-# route is served, so an application that only calls Xero leaves it out. To
-# receive them, paste the key from the Xero app's Webhooks tab.
-XERO_WEBHOOK_KEY=
-
 # Holds the token-refresh and webhook-retry locks. array locks within one
 # process and file within one server; across servers, use redis, memcached
 # or database.
