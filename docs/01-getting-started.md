@@ -79,7 +79,8 @@ application's `composer.json`:
 "repositories": [
     {
         "type": "vcs",
-        "url": "https://github.com/it-peoplelogy/laravel-xero-bridge.git"
+        "url": "https://github.com/it-peoplelogy/laravel-xero-bridge.git",
+        "no-api": true
     }
 ]
 ```
@@ -87,7 +88,21 @@ application's `composer.json`:
 `repositories` is a top-level key, sitting alongside `require` and `require-dev`.
 
 The repository is public, so **no authentication is required** — no SSH key, no token, no deploy key,
-and nothing to configure on a build server. Composer reads it anonymously.
+and nothing to configure on a build server. Composer reads it anonymously, as long as the entry keeps
+both of these:
+
+- **The `https://` address.** Not `git@github.com:it-peoplelogy/laravel-xero-bridge.git`: GitHub refuses
+  SSH without a key even for a public repository, and Composer then stops to ask for a GitHub token.
+- **`"no-api": true`.** Without it Composer looks versions up through GitHub's API, which allows 60
+  anonymous requests an hour. When that lookup fails — the limit used up, or a stale GitHub token saved
+  on the machine — Composer asks for a token; under `--no-interaction` it falls back to cloning over
+  SSH, which fails on a server with no key, or stops with an API-limit error. With `no-api`, Composer
+  runs plain `git` over https and never calls the API.
+
+With `no-api` the package is installed as a git checkout in `vendor/` — there is no zip to download. If
+your deployment runs `chmod` over `vendor/`, git sees the changed files as modified and the next update
+stops to ask whether to discard them, or under `--no-interaction` fails with "has uncommitted changes".
+Add `"discard-changes": true` to your `config` block and Composer replaces them without asking.
 
 The source is publicly visible so Peoplelogy Group's applications can install it without credentials.
 Visibility grants no licence: the package is proprietary, and copying, modifying, distributing or using
@@ -357,7 +372,7 @@ The full story is in [The test console](07-test-console.md).
 | Key | Default | What breaks if it is wrong |
 |---|---|---|
 | `XERO_WEBHOOK_KEY` | none | Unset or wrong: **every** webhook is rejected with a 401 and the signature check fails closed. `xero-bridge:status` warns when it is unset while webhooks are on. |
-| `XERO_WEBHOOKS_ENABLED` | `true` | False unregisters the webhook route entirely; Xero's deliveries 404 and the subscription is disabled after 24 hours of failures. |
+| `XERO_WEBHOOKS_ENABLED` | `true` | Set it false when the application only calls Xero and never needs Xero to call it: `xero-bridge:status` then stops warning about `XERO_WEBHOOK_KEY`. Write `false` or `0` — `off` and `no` read as on. False unregisters the webhook route entirely; Xero's deliveries 404 and the subscription is disabled after 24 hours of failures. |
 | `XERO_WEBHOOK_PREFIX` | none — follows `XERO_ROUTES_PREFIX` | The webhook's own prefix, in place of `XERO_ROUTES_PREFIX`: `api/v1/xero` serves it at `/api/v1/xero/webhook` while connect, callback and the console stay where they are. Unset or empty follows `XERO_ROUTES_PREFIX`, so a bare `XERO_WEBHOOK_PREFIX=` moves nothing; `/` means the site root, `/webhook`. The route keeps its name and its cookieless middleware under any prefix. Moving it means re-entering the URL in the Xero app's Webhooks tab — Xero re-runs its intent-to-receive check — and rebuilding `route:cache`. |
 | `XERO_WEBHOOK_PATH` | `webhook` | Appended to the webhook's prefix: `XERO_WEBHOOK_PREFIX` when set, otherwise `XERO_ROUTES_PREFIX`. A leading slash is trimmed rather than read as absolute, so `/webhook` still means `/xero/webhook`. Changing it after registering the URL with Xero breaks delivery until you re-enter it there. |
 | `XERO_WEBHOOK_QUEUE` | default queue | The queue the envelope job is pushed onto. |

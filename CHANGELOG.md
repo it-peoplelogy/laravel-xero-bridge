@@ -10,6 +10,23 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+### Fixed
+
+- **The install instructions could leave a server asking for a GitHub token.** The `repositories` entry
+  in the README and `docs/01-getting-started.md` now carries `"no-api": true`. Without it Composer looks
+  versions up through GitHub's API, and when that lookup fails — 60 anonymous requests an hour, or a
+  stale token saved on the machine — it asks for a token, or under `--no-interaction` falls back to
+  cloning over SSH, which fails on a server with no key. Add the line to your own `composer.json`;
+  nothing else changes. Both pages also say why the address must be `https://`, and that the package is
+  then installed as a git checkout, so a deployment that runs `chmod` over `vendor/` wants
+  `"discard-changes": true`.
+
+### Changed
+
+- **The README documents `XERO_WEBHOOKS_ENABLED`.** An application that only calls Xero sets it to
+  `false`: the webhook route is not registered and `xero-bridge:status` stops warning about
+  `XERO_WEBHOOK_KEY`. Write `false` or `0` — `off` and `no` read as on.
+
 ## [1.5.0] - 2026-10-04
 
 The whole upgrade is `composer update peoplelogy/laravel-xero-bridge`: nothing to publish, no

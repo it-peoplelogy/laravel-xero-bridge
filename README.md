@@ -55,7 +55,8 @@ application's `composer.json`:
 "repositories": [
     {
         "type": "vcs",
-        "url": "https://github.com/it-peoplelogy/laravel-xero-bridge.git"
+        "url": "https://github.com/it-peoplelogy/laravel-xero-bridge.git",
+        "no-api": true
     }
 ]
 ```
@@ -63,7 +64,20 @@ application's `composer.json`:
 `repositories` is a top-level key, alongside `require` and `require-dev`.
 
 The repository is public, so **no authentication is needed** — no SSH key, no token, no deploy key, and
-nothing to configure on a build server.
+nothing to configure on a build server — as long as the entry keeps both of these:
+
+- **The `https://` address.** Not `git@github.com:it-peoplelogy/laravel-xero-bridge.git`: GitHub refuses
+  SSH without a key even for a public repository, and Composer then stops to ask for a GitHub token.
+- **`"no-api": true`.** Without it Composer looks versions up through GitHub's API, which allows 60
+  anonymous requests an hour. When that lookup fails — the limit used up, or a stale GitHub token saved
+  on the machine — Composer asks for a token; under `--no-interaction` it falls back to cloning over
+  SSH, which fails on a server with no key, or stops with an API-limit error. With `no-api`, Composer
+  runs plain `git` over https and never calls the API.
+
+With `no-api` the package is installed as a git checkout in `vendor/` — there is no zip to download. If
+your deployment runs `chmod` over `vendor/`, git sees the changed files as modified and the next update
+stops to ask whether to discard them, or under `--no-interaction` fails with "has uncommitted changes".
+Add `"discard-changes": true` to your `config` block and Composer replaces them without asking.
 
 The source is publicly visible so the group's applications can install it without credentials.
 Visibility grants no licence: copying, modifying, distributing or using it outside Peoplelogy Group
@@ -523,7 +537,8 @@ lists every key.
 | `XERO_CLIENT_ID` | yes | From your Xero app. |
 | `XERO_CLIENT_SECRET` | yes | Shown once at creation. A wrong value fails as `invalid_client`, not as an expired connection. |
 | `XERO_REDIRECT_URI` | yes | Must match the app exactly. https, except `http://localhost`. |
-| `XERO_WEBHOOK_KEY` | if using webhooks | From the app's Webhooks tab. Unset means every webhook is rejected with a 401. |
+| `XERO_WEBHOOKS_ENABLED` | no | Defaults to true. Set `false` when the application only calls Xero and never needs Xero to call it: the webhook route is not registered, nothing needs setting up in the Xero app, and `xero-bridge:status` stops warning about `XERO_WEBHOOK_KEY`. Write `false` or `0` — `off` and `no` read as on. See [Webhooks](#webhooks). |
+| `XERO_WEBHOOK_KEY` | if using webhooks | From the app's Webhooks tab. Unset means every webhook is rejected with a 401. Not using webhooks? Turn them off with `XERO_WEBHOOKS_ENABLED=false` instead. |
 | `XERO_WEBHOOK_PREFIX` | no | The webhook's own prefix, in place of `XERO_ROUTES_PREFIX`: `api/v1/xero` serves it at `/api/v1/xero/webhook`, and `/` at the site root. Unset or empty follows `XERO_ROUTES_PREFIX`. Moving the URL means re-entering it in the Xero app and rebuilding `route:cache`. |
 | `XERO_WEBHOOK_UNKNOWN_TENANTS` | no | `dispatch` (the default) or `ignore`: whether events for an organisation with no stored connection here reach your listeners. See [Webhooks](#webhooks). |
 | `XERO_SCOPES` | no | Space separated. Must include `offline_access`. The default is broad — see [Scopes](#scopes). |
@@ -560,7 +575,10 @@ XERO_REDIRECT_URI="${APP_URL}/xero/callback"
 # Granular scopes. offline_access is mandatory or you get no refresh token.
 XERO_SCOPES="openid profile email offline_access accounting.invoices accounting.payments accounting.contacts accounting.settings accounting.attachments"
 
-# From the Xero app's Webhooks tab. Leave blank to reject all webhooks.
+# Webhooks are Xero calling this application. If it only calls Xero, set this
+# false -- or 0; off/no read as on -- and the route is not registered at all.
+XERO_WEBHOOKS_ENABLED=true
+# From the Xero app's Webhooks tab. Blank rejects every webhook with a 401.
 XERO_WEBHOOK_KEY=
 # Events for an organisation with no stored connection here -- one connected
 # to the same Xero app from another environment, say. dispatch (the default)
@@ -1148,9 +1166,16 @@ try {
 
 ## Webhooks
 
-Set `XERO_WEBHOOK_KEY` and give Xero the URL printed by `xero-bridge:install` — `/xero/webhook` by
-default: the route prefix plus `webhook`, or `XERO_WEBHOOK_PREFIX` in place of the route prefix when
-you give the webhook one of its own. Then listen:
+**Only needed when Xero calls your application.** A webhook is Xero telling you that something changed
+inside Xero. An application that only calls Xero needs none of this section: set
+`XERO_WEBHOOKS_ENABLED=false` — `false` or `0`, since `off` and `no` read as on — and the webhook route
+is not registered, nothing needs setting up in the Xero app, and `xero-bridge:status` stops warning about
+`XERO_WEBHOOK_KEY`. Like `XERO_ROUTES_ENABLED`, the setting is baked into `config:cache` and
+`route:cache`, so rebuild both after changing it.
+
+To receive them, set `XERO_WEBHOOK_KEY` and give Xero the URL printed by `xero-bridge:install` —
+`/xero/webhook` by default: the route prefix plus `webhook`, or `XERO_WEBHOOK_PREFIX` in place of the
+route prefix when you give the webhook one of its own. Then listen:
 
 ```php
 Event::listen(XeroWebhookReceived::class, function (XeroWebhookReceived $event) {
