@@ -343,7 +343,10 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
         // session and no cookies, which the connect/callback routes require.
         // And no key, no route: without one the endpoint could only answer
         // 401 to every delivery. XeroConfig::webhooksActive() holds the rule.
-        if ($this->app->make(XeroConfig::class)->webhooksActive()) {
+        // A fresh instance, not the container's singleton: resolving that here
+        // would build it at boot, and under Octane a boot-time singleton keeps
+        // the base config repository instead of each request's copy.
+        if ((new XeroConfig($this->app->make(ConfigRepository::class)))->webhooksActive()) {
             $this->loadRoutesFrom(__DIR__.'/../routes/webhook.php');
         }
 

@@ -33,21 +33,26 @@ data.
    [The route](#the-route) below says what moves it.
 
    > ⚠️ Xero delivers webhooks **only to https on port 443**. Not http, not port 8443, not an IP
-   > address. Until `XERO_WEBHOOK_KEY` is set, the install command prints the URL to register without
-   > checking it; once the key is set, it warns when the URL is not `https://`. It never inspects the
-   > port, so a non-443 one is on you.
+   > address. The install command flags a URL that is not `https://`: with a plain line while
+   > `XERO_WEBHOOK_KEY` is unset, and with a warning once it is set. It never inspects the port, so a
+   > non-443 one is on you.
 
 3. Choose the event categories you want (Xero's own UI offers Invoices and Contacts, among others),
    and press **Save**.
 4. Copy the **signing key** Xero shows you into `.env`, and deploy it — rebuilding `config:cache` and
-   `route:cache` if you cache them:
+   `route:cache` if you cache them, on a machine where the key is set:
 
    ```dotenv
    XERO_WEBHOOK_KEY=your-webhook-signing-key
    ```
 
    The key is what switches the endpoint on. Until it is set the route is not registered, and Xero's
-   check in the next step would get a 404.
+   check in the next step would get a 404. It has to be in config before the package's service
+   provider boots, as it is from `.env`, a config file or a provider's `register()`. A key put there
+   later — in `AppServiceProvider::boot()`, a tenancy bootstrapper or a runtime secrets lookup — comes
+   too late for the route, and so does a `route:cache` built without the key, such as one built into an
+   image that gets its secrets only at runtime. `php artisan xero-bridge:status` warns while a key is
+   set and no route is registered, so run it before the next step.
 
 5. Press **Send "Intent to receive"** in the Xero UI. See
    [Intent to receive](#intent-to-receive) below for what has to pass.
@@ -55,19 +60,22 @@ data.
 The signing key is per Xero app and is unrelated to `XERO_CLIENT_SECRET`. Rotating it in the Xero UI
 takes effect immediately, so deploy the new value before you rotate.
 
-> ⚠️ **No key, no route.** With `XERO_WEBHOOK_KEY` unset or empty the route is not registered at all,
-> and `xero-bridge:status` says nothing about it: that is how an application that only calls Xero
-> serves no endpoint without setting anything. Without a key the endpoint could only fail closed,
+> ⚠️ **No key, no route.** With `XERO_WEBHOOK_KEY` unset, empty, `false` or `0` the route is not
+> registered at all, and `xero-bridge:status` says nothing about it: that is how an application that
+> only calls Xero serves no endpoint without setting anything. `true` and a value of only spaces mean no
+> key too; anything else, `off` included, is a key. Without a key the endpoint could only fail closed,
 > answering 401 to every delivery, so serving it would add an open endpoint and nothing else. If you do
 > receive webhooks, then, a key missing from one environment shows up at Xero's end rather than in
 > status: deliveries get a 404, the subscription goes to **Retry**, and after 24 hours it is disabled and
 > Xero emails the app's collaborators.
 >
-> Whether the route exists is decided when routes are registered, so rebuild `config:cache` and
-> `route:cache` after setting or removing the key. A route cached while a key was set outlives the key,
-> and answers every delivery with a 401, which looks exactly like an attack.
-> `XERO_WEBHOOKS_ENABLED=false` removes the route even with a key set — a kill switch, which an
-> application that only calls Xero does not need.
+> Whether the route exists is decided as the package's service provider boots — or, where routes are
+> cached, when `route:cache` ran — so rebuild `config:cache` and `route:cache` after setting or removing
+> the key. A key that reaches config after the provider booted, or a route cache built without it,
+> leaves no route, and every delivery gets a 404; that one `xero-bridge:status` does warn about. A route
+> cached while a key was set outlives the key, and answers every delivery with a 401, which looks
+> exactly like an attack. `XERO_WEBHOOKS_ENABLED=false` removes the route even with a key set — a kill
+> switch, which an application that only calls Xero does not need.
 
 ### The route
 
@@ -79,7 +87,7 @@ takes effect immediately, so deploy the new value before you rotate.
 | Middleware | `EnsureCookielessResponse` only |
 | Explicitly excluded | `StartSession`, `EncryptCookies`, `AddQueuedCookiesToResponse` |
 | CSRF | none — the HMAC signature is the authentication |
-| Registered by | `routes/webhook.php`, loaded only when `xero-bridge.webhooks.enabled` is true **and** `XERO_WEBHOOK_KEY` is set |
+| Registered by | `routes/webhook.php`, loaded as the package's service provider boots, and only when `xero-bridge.webhooks.enabled` is true **and** `XERO_WEBHOOK_KEY` is set |
 
 The path is a prefix followed by `webhooks.path`. The prefix is `webhooks.prefix` when that is set,
 and the connect routes' `routes.prefix` when it is not:
@@ -118,9 +126,10 @@ state; the webhook route must have **no** session and **no** cookies, because an
 fails Xero's validation. They cannot share a middleware stack.
 
 > ⚠️ `php artisan route:cache` bakes in whatever `webhooks.enabled`, `routes.enabled`, the webhook
-> URL and the presence of `XERO_WEBHOOK_KEY` were at cache time. Changing the env var afterwards does
-> nothing until you re-cache: a key set after caching still has no route to answer Xero, which gets a
-> 404, and a key removed after caching leaves the cached route answering 401 to everything.
+> URL and the presence of `XERO_WEBHOOK_KEY` were at cache time. Changing them afterwards adds or removes
+> no route until you re-cache: a key set after caching still has no route to answer Xero, which gets a
+> 404, and a key removed after caching leaves the cached route in place, answering 401 to everything.
+> `xero-bridge:status` warns about the first; the second shows only as those 401s.
 
 ### Payload shape
 
@@ -307,13 +316,14 @@ cookie and asserts it is gone.
 | Valid signature, the same events' first delivery still being queued (on the `sync` driver: its listeners still running) | 503 | no | none — logged at `info`; Xero retries later |
 | Valid signature, the uniqueness lock cannot be taken (its cache store is down) | 200 | one `ProcessXeroWebhook`, without the lock | as for any delivery — logged at `warning` |
 | Missing or wrong signature | 401 | no | `XeroWebhookSignatureFailed` |
-| `XERO_WEBHOOK_KEY` unset, with the route kept by a `route:cache` built while it was set | 401 | no | `XeroWebhookSignatureFailed` |
+| No `XERO_WEBHOOK_KEY`, with the route kept by a `route:cache` built while one was set | 401 | no | `XeroWebhookSignatureFailed` |
 | Either of those, and a `XeroWebhookSignatureFailed` listener throws | 401 | no | `XeroWebhookSignatureFailed` — the listener's exception is logged at `error` |
 | Valid signature, empty `events` (validation ping) | 200 | no | none |
 | Valid signature, body is not JSON | 200 | no | none — logged at `critical` |
 | Valid signature, but the job cannot be queued | 500 | no | none — logged at `error` |
 | Valid signature, the job runs on the `sync` driver, and a listener throws | 500 | ran inside the request | up to the listener that threw — logged at `error` |
-| `XERO_WEBHOOK_KEY` unset, and no route cached while it was set | 404 — the route is not registered | no | none |
+| No `XERO_WEBHOOK_KEY`, and no route cached while one was set | 404 — the route is not registered | no | none |
+| `XERO_WEBHOOK_KEY` set, but no route registered: a `route:cache` built before the key, or the key put into config after the package booted | 404 — the route is not registered | no | none — `xero-bridge:status` warns |
 
 Most of those rows are worth explaining.
 
@@ -1567,7 +1577,7 @@ public function __construct(
 
 **When it fires**
 
-From the controller, synchronously, immediately before returning the 401. With `XERO_WEBHOOK_KEY` unset
+From the controller, synchronously, immediately before returning the 401. With no `XERO_WEBHOOK_KEY`
 there is no route, so nothing reaches the controller — except through a route kept by a `route:cache`
 built while a key was set. There the missing key fails closed and fires this event, indistinguishable
 from a bad signature by design.
@@ -1628,9 +1638,9 @@ class WatchXeroSignatureFailures
 The package's own suite shows the shape to copy. Three things matter.
 
 **Set the key before the application boots.** The route is registered only when `XERO_WEBHOOK_KEY` is
-set as the application boots, and a test body runs after that: a `config()->set()` there reaches the
-signature check but not the routes, so the post gets a 404. Put the key in `phpunit.xml`, as the
-package's own suite does:
+in config as the package's service provider boots, and a test body runs after that: a `config()->set()`
+there reaches the signature check but not the routes, so the post gets a 404. Put the key in
+`phpunit.xml`, as the package's own suite does:
 
 ```xml
 <env name="XERO_WEBHOOK_KEY" value="test-webhook-key" force="true"/>

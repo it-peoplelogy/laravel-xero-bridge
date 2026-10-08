@@ -109,9 +109,9 @@ php artisan migrate
 `xero-bridge:install` publishes the config and the package's four migrations — for `xero_connections`,
 `xero_webhook_events`, `xero_write_records` and `xero_api_calls` — and prints every `.env` key you need,
 the exact redirect URI to register, the connect URL, whether the test console is on, and your webhook
-URL. The optional MyInvois module keeps its verdicts in a fifth table, `myinvois_validations`, whose
-migration has a tag of its own that install never publishes:
-`php artisan vendor:publish --tag=myinvois-migrations`.
+URL — or, until `XERO_WEBHOOK_KEY` is set, that webhooks are off and how to turn them on. The optional
+MyInvois module keeps its verdicts in a fifth table, `myinvois_validations`, whose migration has a tag
+of its own that install never publishes: `php artisan vendor:publish --tag=myinvois-migrations`.
 
 Every table is created under a **bare** name, so whatever prefix your database connection sets is applied
 automatically — on a connection with `'prefix' => 'app_'`, `xero_connections` becomes
@@ -1163,8 +1163,11 @@ To receive them, register the URL printed by `xero-bridge:install` in the Xero a
 route prefix when you give the webhook one of its own. Put the signing key Xero shows into
 `XERO_WEBHOOK_KEY` and deploy it before you press **Send "Intent to receive"**, since the route exists
 only once the key is set. `XERO_WEBHOOKS_ENABLED=false` — `false` or `0`, since `off` and `no` read as
-on — is a kill switch that removes the route even then. Both are read when routes are registered, so
-rebuild `config:cache` and `route:cache` after setting or removing either. Then listen:
+on and a bare `XERO_WEBHOOKS_ENABLED=` as off — is a kill switch that removes the route even then. Both
+are read as the package's service provider boots, so the key has to be in config by then — from `.env`
+or a config file, not set in a provider's `boot()` — and `config:cache` and `route:cache` need
+rebuilding after setting or removing either, the route cache where the key is set. While a key is set
+and no route is registered, `xero-bridge:status` warns. Then listen:
 
 ```php
 Event::listen(XeroWebhookReceived::class, function (XeroWebhookReceived $event) {

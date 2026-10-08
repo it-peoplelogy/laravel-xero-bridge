@@ -100,7 +100,9 @@ it('says on install that webhooks are off, and how to receive them', function ()
             ."route:cache, then press Send \"Intent to receive\".\n"
         )
         ->not->toContain('Webhook URL (paste into')
-        ->not->toContain('Webhooks are disabled');
+        ->not->toContain('Webhooks are disabled')
+        // https already: nothing to say about the scheme.
+        ->not->toContain('Xero delivers only to https');
 });
 
 it('builds the URL to register by the route file\'s rule, as there is no route to ask', function () {
@@ -113,13 +115,53 @@ it('builds the URL to register by the route file\'s rule, as there is no route t
         ->not->toContain('/xero/webhook');
 });
 
-it('raises no https warning over a webhook URL nobody has to register', function () {
-    // With a key this URL would draw the warning; without one there is
-    // nothing to fix.
+it('notes in a plain line, not a warning, that the URL to register needs https', function () {
+    // With a key this URL would draw the warning; without one nothing is
+    // wrong, but whoever goes on to register it needs to know Xero refuses it.
     URL::forceRootUrl('http://app.example.test');
     URL::forceScheme('http');
 
     expect(installCommandOutput())
         ->toContain('register http://app.example.test/xero/webhook in your Xero app')
+        ->toContain("\n  Xero delivers only to https on port 443: set APP_URL to the public https address first.\n")
+        // Not the warning box a key's URL draws. (Other parts of install may
+        // still warn on an http root -- the redirect URI does.)
         ->not->toContain('Xero only delivers webhooks to https');
+});
+
+it('warns, and fails --strict, when a key is set but no route was registered for it', function () {
+    // A route:cache built before the key, or a key put into config after the
+    // package booted: Xero is meant to reach this application and gets a 404.
+    healthyLockStore();
+    connection();
+    config()->set('xero-bridge.webhook_key', SignedWebhook::KEY);
+
+    $exit = Artisan::call('xero-bridge:status', ['--strict' => true]);
+
+    Artisan::call('xero-bridge:status', ['--json' => true]);
+    $json = json_decode(Artisan::output(), true, 512, JSON_THROW_ON_ERROR);
+
+    expect($exit)->toBe(1)
+        ->and($json['warnings'])->toBe([
+            'XERO_WEBHOOK_KEY is set but no webhook route is registered, so Xero gets a 404. '
+            .'Rebuild route:cache, and put the key in config before the package boots.',
+        ])
+        // The console's payload: the key set, no URL to show for it.
+        ->and(app(Diagnostics::class)->environment()['webhook_key_set'])->toBeTrue()
+        ->and(app(Diagnostics::class)->urls()['webhook'])->toBeNull();
+});
+
+it('tells install the URL has no route yet when the key came after the routes', function () {
+    URL::forceRootUrl('https://app.example.test');
+    URL::forceScheme('https');
+    config()->set('xero-bridge.webhook_key', SignedWebhook::KEY);
+
+    expect(installCommandOutput())
+        ->toContain(
+            "Webhook URL (paste into the Xero app's Webhooks tab):\n"
+            ."  https://app.example.test/xero/webhook\n"
+            .'  No webhook route is registered yet, so Xero would get a 404: rebuild route:cache '
+            ."before pressing Send \"Intent to receive\".\n"
+        )
+        ->not->toContain('Webhooks are off');
 });

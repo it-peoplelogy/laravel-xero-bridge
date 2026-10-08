@@ -24,7 +24,8 @@ return [
     /*
     | The signing key from the Xero app's Webhooks tab. Leave unset to disable
     | webhook handling entirely: with no key no webhook route is served, which
-    | is all an application that only calls Xero needs.
+    | is all an application that only calls Xero needs. Blank, false and 0
+    | count as unset.
     */
     'webhook_key' => env('XERO_WEBHOOK_KEY'),
 
@@ -408,7 +409,8 @@ return [
     'webhooks' => [
         // A kill switch: false serves no webhook route even with a key set.
         // Not needed to turn webhooks off -- leaving XERO_WEBHOOK_KEY unset
-        // already does. Write false or 0; off and no read as on.
+        // already does. Write false or 0; off and no read as on, and a bare
+        // XERO_WEBHOOKS_ENABLED= as off.
         'enabled' => (bool) env('XERO_WEBHOOKS_ENABLED', true),
 
         'path' => env('XERO_WEBHOOK_PATH', 'webhook'),

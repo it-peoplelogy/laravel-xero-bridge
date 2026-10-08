@@ -427,6 +427,16 @@ final class Diagnostics
         // route is served (XeroConfig::webhooksActive()), which is exactly
         // what an application that only calls Xero wants: webhooks off is a
         // state, not a fault, and --strict must not fail every such install.
+        //
+        // The fault is the reverse: a key set, so Xero is meant to reach this
+        // application, and no route to answer it -- a route:cache built before
+        // the key existed, or a key put into config after the package booted
+        // (a provider's boot(), a tenancy bootstrapper). Every delivery, the
+        // intent-to-receive check included, then gets a 404.
+        if ($this->config->webhooksActive() && ! Route::has($this->config->routeName('webhook'))) {
+            $warnings[] = 'XERO_WEBHOOK_KEY is set but no webhook route is registered, so Xero gets a 404. '
+                .'Rebuild route:cache, and put the key in config before the package boots.';
+        }
 
         $scope = $this->lockScope();
         $store = $this->lockStoreName();

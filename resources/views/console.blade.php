@@ -983,11 +983,15 @@ Suggested order for a first run:
             ['Redirect URI',       '<code class="mono">' + esc(c.redirect_uri) + '</code>'],
             ['Connect URL',        url(u.connect)],
             ['Callback URL',       url(u.callback)],
+            /* Amber only for the fault: a key set, so Xero is meant to reach
+               this application, and no route registered to answer it. */
             ['Webhook URL',        u.webhook
                 ? url(u.webhook)
-                : pill('off', 'mute') + ' <span style="color:var(--muted)">' +
-                  (c.webhooks_enabled ? 'served only while XERO_WEBHOOK_KEY is set' : 'XERO_WEBHOOKS_ENABLED=false') +
-                  '</span>'],
+                : (c.webhooks_enabled && c.webhook_key_set
+                    ? pill('not registered', 'warn') + ' <span style="color:var(--muted)">key set but no route — rebuild route:cache</span>'
+                    : pill('off', 'mute') + ' <span style="color:var(--muted)">' +
+                      (c.webhooks_enabled ? 'served only while XERO_WEBHOOK_KEY is set' : 'XERO_WEBHOOKS_ENABLED=false') +
+                      '</span>')],
             ['Table',              '<code class="mono">' + esc(c.table) + '</code>'],
             ['Default connection', '<code class="mono">' + esc(c.default_connection) + '</code>'],
             ['Lock store',         '<code class="mono">' + esc(c.lock_store) + '</code>' + lockScope(c)],

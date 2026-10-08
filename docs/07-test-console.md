@@ -167,6 +167,10 @@ Below them come the warnings — the same list `xero-bridge:status` prints:
 - the write ledger on with its table missing or unreadable, or with claims pending for over an hour;
 - a package table that the `migrations` table records as created more than once — rolling back the later
   batch would drop the live table;
+- a `XERO_WEBHOOK_KEY` set with no webhook route registered to answer Xero, which gets a 404 — a
+  `route:cache` built before the key, or a key put into config after the package booted. The
+  **Webhook URL** row reads **not registered** in amber at the same time; see
+  [Troubleshooting](#troubleshooting);
 - a lock store whose locks do not reach far enough: `array` (one process), or `file` as a default nobody
   chose (one server);
 - connections with recent transient failures;
@@ -391,6 +395,14 @@ A copy published before 1.5.0 still says the page is "off in production unless
 `XERO_CONSOLE_ENABLED=true`" and still draws the old name-based lock-store pill. Republishing with
 `--force` brings in the current page, and overwrites any edits you made to your copy.
 
+A copy published before 1.6.0 shows a missing `XERO_WEBHOOK_KEY` in amber, and wherever no key is set its
+**Webhook URL** row reads "route disabled": the page is no longer given a URL for a route that is not
+served. Nothing is wrong. Republishing with `--force` brings in the grey "off" rows.
+
+No copy published before 1.6.1 has the amber **not registered** row. Where a key is set but no webhook
+route answers Xero, a copy from 1.6.0 reads a grey "off", and an older one "route disabled". The
+Pre-flight panel lists the warning in any copy, since it shows whatever status reports.
+
 ---
 
 ## Troubleshooting
@@ -414,13 +426,27 @@ Run `php artisan route:clear`, or rebuild it with `php artisan route:cache`.
 **A value reads `[redacted]`.** That is deliberate: credentials and bank details are masked out of every
 response. See [What it never shows you](#what-it-never-shows-you).
 
-**Connect URL or Callback URL reads "route disabled".** That route is not served: `XERO_ROUTES_ENABLED`
-is off. The console reports it rather than failing, so the rest of the page still works.
+**Callback URL reads "route disabled".** `XERO_ROUTES_ENABLED` is off, so neither the connect nor the
+callback route is served; the Connect URL row then shows the bare path, `/xero/connect/default`, which
+nothing answers. The console reports it rather than failing, so the rest of the page still works. In a
+copy of the page published before 1.6.0 the **Webhook URL** row reads "route disabled" too, wherever no
+webhook route is served, a missing key included: see [Customising the page](#customising-the-page).
 
-**Webhook URL reads "off", in grey.** No webhook route is served. Usually no `XERO_WEBHOOK_KEY` is set —
-the route exists only once one is, which is all an application that only calls Xero needs, so the
-`XERO_WEBHOOK_KEY` row is grey too, not amber. Otherwise `XERO_WEBHOOKS_ENABLED` is off, and the row
-says so.
+**Webhook URL reads "off", in grey.** The console has no webhook URL for you to register. Usually no
+`XERO_WEBHOOK_KEY` is set, so no webhook route is registered — all an application that only calls Xero
+needs — and the `XERO_WEBHOOK_KEY` row is grey too, not amber. If `XERO_WEBHOOKS_ENABLED` is off, the
+row says so. One case it cannot show: with no key, a route cache built while a key was set still serves
+the route, answering every delivery with a 401. Rebuild it with `php artisan route:cache`, or run
+`php artisan route:clear`.
+
+**Webhook URL reads "not registered", in amber.** `XERO_WEBHOOK_KEY` is set, so Xero is meant to reach
+this application, but no webhook route is registered to answer it: every delivery, the intent-to-receive
+check included, gets a 404. Either a route cache was built before the key was set — rebuild it where the
+key is set with `php artisan route:cache`, or run `php artisan route:clear` — or the key reaches config
+only after the package's service provider has booted, from `AppServiceProvider::boot()`, a tenancy
+bootstrapper or a runtime secrets lookup: put it in `.env`, a config file or a provider's `register()`
+instead. The Pre-flight panel lists the same warning `xero-bridge:status` prints, which `--strict`
+counts.
 
 **Every write is refused.** That is the write guard. Confirm which organisation you are connected to with
 *Reference lookups → Organisation* and check `IsDemoCompany`. See [The write guard](#the-write-guard).

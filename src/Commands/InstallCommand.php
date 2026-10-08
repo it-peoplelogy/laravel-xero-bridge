@@ -311,22 +311,39 @@ class InstallCommand extends Command
         }
 
         if (! $config->webhooksActive()) {
-            // A plain line, not a warning, and no https check: an application
-            // that only calls Xero is the usual install, and has nothing to do.
+            // Plain lines, never a warning: an application that only calls
+            // Xero is the usual install, and has nothing to do. The https
+            // note is a plain line too -- it matters only to someone who goes
+            // on to register the URL, and Xero refuses anything but https.
+            $url = url($config->webhookUri());
+
             $this->line('Webhooks are off: no XERO_WEBHOOK_KEY is set, so no webhook route is served. '
                 .'An application that only calls Xero needs nothing more.');
-            $this->line('  To receive webhooks, register <fg=cyan>'.url($config->webhookUri()).'</> in your Xero '
+            $this->line('  To receive webhooks, register <fg=cyan>'.$url.'</> in your Xero '
                 .'app\'s Webhooks tab, put the key Xero shows into <fg=yellow>XERO_WEBHOOK_KEY</>, rebuild '
                 .'config:cache and route:cache, then press Send "Intent to receive".');
+
+            if (! str_starts_with($url, 'https://')) {
+                $this->line('  Xero delivers only to https on port 443: set APP_URL to the public https address first.');
+            }
 
             return;
         }
 
         $name = $config->routeName('webhook');
-        $url = Route::has($name) ? route($name) : url($config->webhookUri());
+        $registered = Route::has($name);
+        $url = $registered ? route($name) : url($config->webhookUri());
 
         $this->line('Webhook URL (paste into the Xero app\'s Webhooks tab):');
         $this->line('  <fg=cyan>'.$url.'</>');
+
+        // A key and no route: a route:cache built before the key, or a key put
+        // into config after the package booted. The URL is still the one to
+        // register, but nothing answers it yet.
+        if (! $registered) {
+            $this->line('  No webhook route is registered yet, so Xero would get a 404: rebuild route:cache '
+                .'before pressing Send "Intent to receive".');
+        }
 
         if (! str_starts_with($url, 'https://')) {
             $this->components->warn(

@@ -103,6 +103,15 @@ Webhook URL (paste into the Xero app's Webhooks tab):
   https://app.example.com/xero/webhook
 ```
 
+When no route is registered to answer that URL yet — a `route:cache` built before the key was set, or a
+key put into config after the package booted — a plain line follows it:
+
+```text
+Webhook URL (paste into the Xero app's Webhooks tab):
+  https://app.example.com/xero/webhook
+  No webhook route is registered yet, so Xero would get a 404: rebuild route:cache before pressing Send "Intent to receive".
+```
+
 With `APP_URL=http://app.test` and no `XERO_REDIRECT_URI` — a local host that is not `localhost` — a
 warning appears after step 4, and, once `XERO_WEBHOOK_KEY` is set, another after the webhook URL:
 
@@ -121,6 +130,14 @@ Webhook URL (paste into the Xero app's Webhooks tab):
 
    WARN  Xero only delivers webhooks to https on port 443, so this URL will not work as-is. Set APP_URL
    to your public https address.
+```
+
+With no key, the webhook block makes the same point in a plain third line rather than a warning:
+
+```text
+Webhooks are off: no XERO_WEBHOOK_KEY is set, so no webhook route is served. An application that only calls Xero needs nothing more.
+  To receive webhooks, register http://app.test/xero/webhook in your Xero app's Webhooks tab, put the key Xero shows into XERO_WEBHOOK_KEY, rebuild config:cache and route:cache, then press Send "Intent to receive".
+  Xero delivers only to https on port 443: set APP_URL to the public https address first.
 ```
 
 **Exit codes**
@@ -174,17 +191,21 @@ Webhook URL (paste into the Xero app's Webhooks tab):
 - The webhook block takes one of three forms, by the same rule that decides whether the route is
   registered:
   - **`XERO_WEBHOOK_KEY` set** — the URL to paste into the Xero app. It is the registered route's
-    own URL; when that route is not registered — a `route:cache` built before the key was set — it is
-    built by the same rule the route uses: `XERO_WEBHOOK_PREFIX`, or `routes.prefix` when that is unset
-    or empty, plus `webhooks.path`, so it moves with `XERO_ROUTES_PREFIX` unless `XERO_WEBHOOK_PREFIX`
-    is set. This is the only form that warns about a URL that is not https.
+    own URL; when that route is not registered — a `route:cache` built before the key was set, or a key
+    put into config after the package's service provider booted — it is built by the same rule the
+    route uses: `XERO_WEBHOOK_PREFIX`, or `routes.prefix` when that is unset or empty, plus
+    `webhooks.path`, so it moves with `XERO_ROUTES_PREFIX` unless `XERO_WEBHOOK_PREFIX` is set. Then a
+    plain line follows the URL: "No webhook route is registered yet, so Xero would get a 404: rebuild
+    route:cache before pressing Send "Intent to receive"." — the same state `xero-bridge:status` warns
+    about. This is the only form that warns about a URL that is not https.
   - **No `XERO_WEBHOOK_KEY`**, the shipped default — no webhook route is served, and the block says so:
     "Webhooks are off: no XERO_WEBHOOK_KEY is set, so no webhook route is served. An application that
     only calls Xero needs nothing more." The indented line after it says how to turn webhooks on: "To
     receive webhooks, register {URL} in your Xero app's Webhooks tab, put the key Xero shows into
     XERO_WEBHOOK_KEY, rebuild config:cache and route:cache, then press Send "Intent to receive"." — the
-    URL built by that same rule, printed as it is. Neither line is a warning: an application that only
-    calls Xero has nothing to do.
+    URL built by that same rule. When that URL is not https, a third line follows: "Xero delivers only
+    to https on port 443: set APP_URL to the public https address first." None of these lines is a
+    warning: an application that only calls Xero has nothing to do.
   - **`XERO_WEBHOOKS_ENABLED=false`**, whatever the key — one line:
     "Webhooks are disabled (XERO_WEBHOOKS_ENABLED=false), so there is no webhook URL to register."
 - Run again, with or without `--force`, it publishes any migration of the tag you have never published,
@@ -374,6 +395,7 @@ undecryptable tokens on a connection that is not invalidated.
 | The write ledger is on and its table does not exist, or could not be checked | WARN |
 | Write claims pending for over an hour | WARN — the same line `xero-bridge:prune` prints |
 | A package table the `migrations` table records as created more than once | WARN: rolling back the later batch would drop the live table |
+| `XERO_WEBHOOK_KEY` is set and `XERO_WEBHOOKS_ENABLED` is not off, but no webhook route is registered — a `route:cache` built before the key existed, or a key put into config after the package's service provider booted, in `AppServiceProvider::boot()`, a tenancy bootstrapper or a runtime secrets lookup | WARN: "XERO_WEBHOOK_KEY is set but no webhook route is registered, so Xero gets a 404. Rebuild route:cache, and put the key in config before the package boots." Every delivery, Xero's intent-to-receive check included, gets that 404 |
 | The lock store is an `array` store, named or the default | WARN: it locks inside one process only |
 | The lock store is a `file` store that is only the default — `XERO_LOCK_STORE` unset or blank | WARN: it locks within one server only |
 | A connection with recent transient failures, and not invalidated | WARN |
@@ -391,7 +413,8 @@ Never counted, even under `--strict`:
 - a webhook-replay or capture table that is merely missing: a flag with no table is a documented no-op,
   and nothing about it is reported;
 - no `XERO_WEBHOOK_KEY`. Without a key no webhook route is served — webhooks are off, which is not a
-  fault — so nothing about it is reported. Before 1.6.0 it was a warning;
+  fault — so nothing about it is reported. Before 1.6.0 it was a warning. The reverse, a key with no
+  route to answer Xero, is one, and is counted (above);
 - MyInvois, which status never reports on;
 - "No Xero organisations are connected." Nothing connected is not a failure.
 

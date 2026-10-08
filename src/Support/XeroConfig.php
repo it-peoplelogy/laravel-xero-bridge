@@ -49,12 +49,21 @@ final class XeroConfig
 
     public function webhookKey(): ?string
     {
-        // env() reads XERO_WEBHOOK_KEY=false as bool false, and (string) false
-        // is ''. That has to read as no key -- a key is what serves the webhook
-        // route, so a key "switched off" that way must not keep it.
-        $value = (string) ($this->get('webhook_key') ?? '');
+        // A key is the long random string Xero shows, and it is what serves the
+        // webhook route. So every attempt to switch webhooks off reads as no
+        // key, never as one: unset, blank, the booleans env() makes of
+        // XERO_WEBHOOK_KEY=false or =true, and "0". A key that was any of those
+        // would be a constant anyone could sign forged deliveries with. Trimmed,
+        // because a copy-paste can add whitespace no real key has.
+        $value = $this->get('webhook_key');
 
-        return $value === '' ? null : $value;
+        if (! is_string($value) && ! is_int($value)) {
+            return null;
+        }
+
+        $value = trim((string) $value);
+
+        return ($value === '' || $value === '0') ? null : $value;
     }
 
     /**

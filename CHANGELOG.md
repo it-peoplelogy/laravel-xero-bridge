@@ -10,6 +10,55 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-08
+
+Hardening for projects that do receive webhooks, and corrections to the 1.6.0 notes. A project that
+only calls Xero sees no change. The whole upgrade is `composer update peoplelogy/laravel-xero-bridge`.
+
+### Fixed
+
+- **Nothing said so when `XERO_WEBHOOK_KEY` was set but no webhook route answered Xero.** Since 1.6.0
+  the route exists only where a key is set, judged as the package's service provider boots — or, where
+  routes are cached, when `route:cache` ran. A route cache built before the key existed, or a key put
+  into config after the provider booted — in `AppServiceProvider::boot()`, a tenancy bootstrapper or a
+  runtime secrets lookup — leaves no route, and every delivery gets a 404, Xero's intent-to-receive
+  check included. Yet `xero-bridge:status` said nothing, even under `--strict`, the test console showed
+  the Webhook URL row in grey, and `xero-bridge:install` printed the URL as ready to paste. Now:
+
+  - `xero-bridge:status` warns "XERO_WEBHOOK_KEY is set but no webhook route is registered, so Xero
+    gets a 404. Rebuild route:cache, and put the key in config before the package boots." It counts for
+    `--strict`, is in `--json`'s `warnings`, and is listed on the test console's Pre-flight panel. If
+    `--strict` starts failing on it after this update, deliveries were already getting a 404.
+  - `xero-bridge:install` still prints the URL to register, then: "No webhook route is registered yet,
+    so Xero would get a 404: rebuild route:cache before pressing Send "Intent to receive"."
+  - The test console's Webhook URL row reads "not registered" in amber, with "key set but no route —
+    rebuild route:cache". Its other states are unchanged.
+
+- **With no key, `xero-bridge:install` could ask you to register a URL Xero refuses.** The line saying
+  how to turn webhooks on prints the URL to register as it is — `http://localhost/xero/webhook` when
+  `APP_URL` is unset. When that URL is not https, a plain line now follows it: "Xero delivers only to
+  https on port 443: set APP_URL to the public https address first."
+
+- **`XERO_WEBHOOK_KEY=0`, `=true` or a value of only spaces counted as a key**, and served the webhook
+  route with a signing key anyone could guess: a delivery signed with it was accepted and reached your
+  listeners. The value is now trimmed, and these all mean no key — no route, as if the line were blank:
+  unset, empty, only spaces, `false`, `true` and `0`. Anything else is a key, `off` and `no` included,
+  so to turn webhooks off leave the key unset or write `false`. A key pasted with a space at either end
+  now verifies instead of failing every signature.
+
+- **Under Octane, a request's own `xero-bridge.*` settings could go unseen.** 1.6.0's service provider
+  built the package's shared configuration object while booting, to decide whether to register the
+  webhook route, even where routes are cached. Octane boots each worker once and hands every request
+  its own copy of the configuration, so a value set for one request — a tenant's `client_id` or
+  `default_connection`, say — never reached that object or anything built on it. The provider now
+  decides with an instance of its own, so where routes are cached the shared one is built on first use
+  again, as in 1.5.0. Nothing else changes.
+
+- **The 1.6.0 upgrade note promised too much to projects that receive webhooks.** Their route stays only
+  where the key is in config before the package's service provider boots and `route:cache` is built
+  where the key is set; the 1.6.0 notes below now say so. The test console documentation now covers the
+  amber row, a stale route cache behind a grey "off", and a console view published before 1.6.0.
+
 ## [1.6.0] - 2026-10-04
 
 Applications that only call Xero — every one so far — need no webhook setting any more: with no
@@ -41,17 +90,22 @@ Applications that only call Xero — every one so far — need no webhook settin
   - `xero-bridge:status` no longer warns "No XERO_WEBHOOK_KEY is set, so every webhook will be rejected
     with a 401.", so `--strict` no longer fails for it: no key means webhooks are off, not that
     something is wrong. Nothing replaces the warning. Neither `--json` nor the test console's payload
-    gains or loses a key; `webhooks_enabled` still reports the switch as set, so read it with
-    `webhook_key_set` to know whether a route is served.
+    gains or loses a key, and `--json` has none about webhooks. In the console's payload,
+    `config.webhooks_enabled` still reports the switch as set, so read it with `config.webhook_key_set`:
+    a route is served only when both are true. `urls.webhook` is now `null` wherever no key is set.
   - `xero-bridge:install` says webhooks are off when no key is set, and how to turn them on: register
     the URL it prints in the Xero app's Webhooks tab, put the key Xero shows into `XERO_WEBHOOK_KEY`,
     rebuild `config:cache` and `route:cache`, then press Send "Intent to receive". With a key it prints
     the webhook URL as before. With `XERO_WEBHOOKS_ENABLED=false` it names the setting:
     "Webhooks are disabled (XERO_WEBHOOKS_ENABLED=false), so there is no webhook URL to register."
-  - The test console shows webhooks off in grey, not amber: the `XERO_WEBHOOK_KEY` row reads "not set
-    — webhooks off — only needed if Xero calls this application", and the Webhook URL row reads "off".
+  - The test console shows webhooks off in grey, not amber: the `XERO_WEBHOOK_KEY` row reads "not set"
+    with "webhooks off — only needed if Xero calls this application", and the Webhook URL row reads
+    "off". A copy of the console view published before 1.6.0 keeps both rows amber, and wherever no key
+    is set its Webhook URL row now reads "route disabled". Nothing is wrong; to get the grey rows,
+    republish it with `php artisan vendor:publish --tag=xero-bridge-views --force` and reapply your
+    edits.
   - `XERO_WEBHOOKS_ENABLED` is now only a kill switch: `false` removes the route even with a key set.
-    Write `false` or `0` — `off` and `no` read as on.
+    Write `false` or `0` — `off` and `no` read as on, and a bare `XERO_WEBHOOKS_ENABLED=` reads as off.
   - Whether the route exists is decided when routes are registered, like any route flag: a
     `route:cache` built while a key was set keeps the route after the key is removed, and one built
     without a key lacks it once a key is set. A route kept that way still fails closed, answering every
@@ -65,10 +119,18 @@ Run `composer update peoplelogy/laravel-xero-bridge`. Nothing to publish, migrat
   by themselves. An `XERO_WEBHOOKS_ENABLED=false` line added for 1.5.0 can stay or go: either way there
   is no route.
 
-- **Projects that do receive webhooks: nothing changes.** Their `XERO_WEBHOOK_KEY` is already set — it
-  had to be, or every delivery was refused — so the route stays. A test that posts to it needs the key
-  as the application boots, from `phpunit.xml` or the test environment: one set with `config()->set()`
-  inside the test now comes too late, and the post gets a 404. See
+- **Projects that do receive webhooks: check where the key is set.** Their `XERO_WEBHOOK_KEY` is
+  already set — it had to be, or every delivery was refused — but the route stays only if the key is in
+  config before the package's service provider boots, as it is from `.env`, a config file or a service
+  provider's `register()`, and only if `route:cache`, where you use it, is built where the key is set.
+  A key put into config later — in `AppServiceProvider::boot()`, a tenancy bootstrapper or a runtime
+  secrets lookup — or a route cache built without it, such as one built into an image that gets its
+  secrets only at runtime, leaves no route after the upgrade, and every delivery gets a 404. Put the
+  key in config before the package boots, and build the route cache where the key is present; from
+  1.6.1 `xero-bridge:status` warns while a key is set and no route is registered. A test that posts to
+  the route needs the key the same way, from `phpunit.xml` or the test environment: one set with
+  `config()->set()` inside the test now comes too late, and the post gets a 404. See
+  [Setting it up](docs/04-webhooks-and-events.md#setting-it-up-in-the-xero-app) and
   [Testing webhooks](docs/04-webhooks-and-events.md#testing-webhooks).
 
 - **Guard any `route('xero-bridge.webhook')` of your own** — one that shows the URL on a settings page,
@@ -1041,9 +1103,9 @@ Documentation only.
 
 ### Added
 
-- A [deployment section](README.md#deploying-server-and-ci-authentication) covering the failure every
-  consuming team will hit on their first server install — `Cloning failed using an ssh key for
-  authentication`, followed by a prompt for a GitHub token.
+- A [deployment section](https://github.com/it-peoplelogy/laravel-xero-bridge/blob/v1.0.4/README.md#deploying-server-and-ci-authentication)
+  covering the failure every consuming team will hit on their first server install — `Cloning failed
+  using an ssh key for authentication`, followed by a prompt for a GitHub token.
 
   A developer's laptop authenticates to GitHub with their own SSH key; a server does not. This happens
   even when `composer.lock` is committed, because the lock pins *which commit* to install without
@@ -1185,7 +1247,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.6.1...HEAD
+[1.6.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.3...v1.5.0
 [1.4.3]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.2...v1.4.3

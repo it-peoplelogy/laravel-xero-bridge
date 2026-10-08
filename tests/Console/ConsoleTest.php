@@ -54,6 +54,17 @@ it('fills the status panels on first paint', function () {
         ->assertDontSee('invoice-pdf', false);
 });
 
+it('draws webhooks off in grey, and only a key with no route in amber', function () {
+    // The page's script draws these rows from the payload, so the script's
+    // own wording is what can regress: no key is a state, not a fault.
+    $this->get('/xero/console')->assertOk()
+        ->assertSee("pill('not set', 'mute')", false)
+        ->assertSee('served only while XERO_WEBHOOK_KEY is set', false)
+        ->assertSee("pill('not registered', 'warn')", false)
+        ->assertSee('key set but no route — rebuild route:cache', false)
+        ->assertDontSee("pill('not set', 'warn')", false);
+});
+
 it('reports a URL as unavailable rather than throwing when its route is gone', function () {
     // Route::has() guards. A host that sets XERO_ROUTES_ENABLED=false or
     // XERO_WEBHOOKS_ENABLED=false, or no XERO_WEBHOOK_KEY, has no such named
