@@ -76,6 +76,16 @@ strong { font-weight: 650; }
 
 hr { border: 0; border-top: 1px solid var(--rule); margin: 36px 0; }
 
+/* Screenshots (the user manual): full column width, framed like a panel. */
+img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 6px 0 18px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+}
+
 /* ---------- the masthead ---------- */
 
 .masthead {
@@ -197,7 +207,7 @@ blockquote h3 {
     h2 { margin-top: 26px; font-size: 15pt; }
     h3 { margin-top: 18px; font-size: 11.5pt; }
 
-    pre, blockquote, table { break-inside: avoid-page; page-break-inside: avoid; }
+    pre, blockquote, table, img { break-inside: avoid-page; page-break-inside: avoid; }
     tr, li { break-inside: avoid-page; page-break-inside: avoid; }
 
     pre { font-size: 8.6pt; background: #f6f8fa !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -222,7 +232,7 @@ blockquote h3 {
 <h1>Using <code>peoplelogy/laravel-xero-bridge</code> — Xero</h1>
 <p>A practical reference for calling Xero through the package: how to reach it, which organisation you
 are talking to, what comes back, the contact flows, the events and commands, and what goes wrong.</p>
-<p>This is one of three usage guides in this folder:</p>
+<p>This is one of the guides in this folder:</p>
 <table>
 <thead>
 <tr>
@@ -242,6 +252,10 @@ are talking to, what comes back, the contact flows, the events and commands, and
 <tr>
 <td><strong>MyInvois usage</strong></td>
 <td>Validating a Malaysian taxpayer TIN with LHDN, and recording the checks</td>
+</tr>
+<tr>
+<td><strong>MyInvois user manual</strong></td>
+<td>For finance and admin staff, not developers: running a TIN check from the console, step by step</td>
 </tr>
 </tbody>
 </table>

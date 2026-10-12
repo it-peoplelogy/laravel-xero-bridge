@@ -3,13 +3,14 @@
 A practical reference for calling Xero through the package: how to reach it, which organisation you
 are talking to, what comes back, the contact flows, the events and commands, and what goes wrong.
 
-This is one of three usage guides in this folder:
+This is one of the guides in this folder:
 
 | Guide | Covers |
 |---|---|
 | **Xero usage** (this one) | The calling mechanism, connections, contacts, events, commands, error handling |
 | **Invoice usage** | Creating, paying, sending, finding and listing invoices |
 | **MyInvois usage** | Validating a Malaysian taxpayer TIN with LHDN, and recording the checks |
+| **MyInvois user manual** | For finance and admin staff, not developers: running a TIN check from the console, step by step |
 
 It covers the package only. Nothing here assumes a particular application, database or domain
 model — the package deliberately contains no bookkeeping logic, so *when* to raise an invoice and

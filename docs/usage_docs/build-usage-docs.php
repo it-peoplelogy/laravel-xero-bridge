@@ -103,6 +103,9 @@ function buildGuide(string $src, string $out): bool
         ? htmlspecialchars(str_replace('`', '', trim($h1[1])), ENT_QUOTES)
         : 'Using peoplelogy/laravel-xero-bridge';
 
+    /* Who it is for: a *-user-manual.md is written for staff, everything else for developers. */
+    $kicker = str_ends_with(basename($src), '-user-manual.md') ? 'User manual' : 'Developer reference';
+
     /* ------------------------------------------------------------------ */
     /* the shell */
     /* ------------------------------------------------------------------ */
@@ -180,6 +183,16 @@ li > ul, li > ol { margin-top: 6px; }
 strong { font-weight: 650; }
 
 hr { border: 0; border-top: 1px solid var(--rule); margin: 36px 0; }
+
+/* Screenshots (the user manual): full column width, framed like a panel. */
+img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 6px 0 18px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+}
 
 /* ---------- the masthead ---------- */
 
@@ -302,7 +315,7 @@ blockquote h3 {
     h2 { margin-top: 26px; font-size: 15pt; }
     h3 { margin-top: 18px; font-size: 11.5pt; }
 
-    pre, blockquote, table { break-inside: avoid-page; page-break-inside: avoid; }
+    pre, blockquote, table, img { break-inside: avoid-page; page-break-inside: avoid; }
     tr, li { break-inside: avoid-page; page-break-inside: avoid; }
 
     pre { font-size: 8.6pt; background: #f6f8fa !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -332,7 +345,7 @@ CSS;
 <body>
 <div class="sheet">
 <div class="masthead">
-  <div class="kicker">Developer reference</div>
+  <div class="kicker">{$kicker}</div>
   <div class="meta">Generated {$generated} &middot; package version {$version}</div>
 </div>
 {$body}

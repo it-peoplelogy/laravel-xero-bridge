@@ -10,6 +10,21 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-10-12
+
+Documentation only. No code or behaviour change; the upgrade is `composer update
+peoplelogy/laravel-xero-bridge` alone.
+
+### Added
+
+- **A MyInvois user manual for staff, not developers** — `docs/usage_docs/myinvois-user-manual`
+  (`.md`, `.html`, `.pdf`, 8 pages): checking a customer's TIN from the test console step by step,
+  with screenshots of the real console. It covers which ID type to choose, reading a match, a no-match
+  and an error and what to do about each, the Forget token button, whether a check is saved, good
+  practice, a quick-reference table, and the settings an administrator must set.
+- The build script styles images, never splits one across PDF pages, and labels a
+  `*-user-manual.md` "User manual" rather than "Developer reference".
+
 ## [1.7.1] - 2026-10-12
 
 Documentation only. No code or behaviour change; the upgrade is `composer update
@@ -1305,7 +1320,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.7.2...HEAD
+[1.7.2]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.6.0...v1.6.1

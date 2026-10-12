@@ -4,8 +4,9 @@ A practical reference for checking a Malaysian taxpayer's TIN against LHDN (HASi
 package's MyInvois module: turning it on, the one call, what its answers mean, what goes wrong, and
 the two optional records it can keep of every check.
 
-This is one of three usage guides in this folder. **Xero usage** covers the Xero side; **Invoice
-usage** shows where a validated TIN and BRN go on the contact before an invoice is sent.
+This is one of the usage guides in this folder, written for developers. **Xero usage** covers the
+Xero side; **Invoice usage** shows where a validated TIN and BRN go on the contact before an invoice
+is sent. Staff who only run checks from the test console want the **MyInvois user manual** instead.
 
 **If you are not in Malaysia, this guide does not apply to you.** The module ships off. It registers
 no route, needs no configuration, and changes nothing about how the rest of the package behaves.

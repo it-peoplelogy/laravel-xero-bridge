@@ -4,7 +4,7 @@ A practical reference for the invoice flows most applications need: creating a d
 invoice to PAID, sending it with the buyer's TIN, BRN and CC list, finding one, and listing them —
 what to pass, what goes over the wire, what comes back, and what goes wrong.
 
-This is one of three usage guides in this folder. **Xero usage** covers how to reach the package
+This is one of the usage guides in this folder. **Xero usage** covers how to reach the package
 (the facade, connections, return shapes, events, the full exception list); **MyInvois usage** covers
 validating a Malaysian TIN with LHDN. This one assumes the facade is imported:
 
