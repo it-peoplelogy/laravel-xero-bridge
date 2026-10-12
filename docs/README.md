@@ -14,29 +14,35 @@ The [project README](../README.md) is the overview; these pages are the detail.
 | [6. Recipes](06-recipes.md) | Complete worked examples, including queued invoice creation and the payment-time buyer-details flow |
 | [7. The test console](07-test-console.md) | The page at `/xero/console` that ships with the package, off until you switch it on — turning it on and off, who can reach it, the write guard, and every action |
 | [8. MyInvois TIN validation](08-myinvois-tin-validation.md) | Optional, off by default: validating a Malaysian taxpayer's TIN against LHDN's MyInvois API |
-| [9. Persistence](09-persistence.md) | Optional, off by default: duplicate protection for writes, durable webhook replay dedupe, and the MyInvois verdict record |
+| [9. Persistence](09-persistence.md) | Optional, off by default: duplicate protection for writes, durable webhook replay dedupe, the MyInvois verdict record and its check history |
 | [10. API call capture](10-api-capture.md) | Optional, off by default: every Xero and LHDN request and response recorded into a table your own dashboard can read, with bank details and credentials removed before the insert |
 
-Alongside them, one document written to be **circulated** rather than browsed:
+Alongside them, three usage guides written to be **circulated** rather than browsed, in
+[`usage_docs/`](usage_docs/). Each is built as `.html` and `.pdf` too, for people who will not clone
+this repository:
 
-| Document | What it is |
+| Guide | What it is |
 |---|---|
-| [Using peoplelogy/laravel-xero-bridge](xero-bridge-usage.md) | A single-file practical reference for the six flows most applications need — the calling mechanism, each flow's wire payload and response, error handling. Also built as `.html` and `.pdf` for people who will not clone this repository. |
+| [Xero usage](usage_docs/xero-usage.md) | The calling mechanism (facade, alias, manager), which organisation you are talking to, return shapes, the contact flows, events, Artisan commands and error handling |
+| [Invoice usage](usage_docs/invoice-usage.md) | The invoice flows: create a DRAFT, get to PAID, TIN/BRN/CC list then send, find one, list — each with its wire payload, response and gotchas — plus the settings that differ per organisation |
+| [MyInvois usage](usage_docs/myinvois-usage.md) | Validating a Malaysian TIN with LHDN: turning it on (sandbox vs production credentials), the call and what its answer means, errors, the console panel, the verdict record and check history, caching and troubleshooting |
 
-Regenerate those two after editing the Markdown:
+Regenerate them after editing the Markdown:
 
 ```bash
-php docs/build-xero-bridge-usage.php     # -> xero-bridge-usage.html
+php docs/usage_docs/build-usage-docs.php     # -> every usage_docs/*.html
 
-# then, for the PDF (Chrome writes the file and hangs; background it and
+# then one PDF per guide (Chrome writes the file and hangs; background it and
 # verify with pdfinfo rather than waiting for it to exit)
-chrome --headless --no-pdf-header-footer \
-  --print-to-pdf=docs/xero-bridge-usage.pdf \
-  file://$PWD/docs/xero-bridge-usage.html
+for g in xero-usage invoice-usage myinvois-usage; do
+  chrome --headless --no-pdf-header-footer \
+    --print-to-pdf=docs/usage_docs/$g.pdf \
+    file://$PWD/docs/usage_docs/$g.html
+done
 ```
 
-The masthead version is read from the document's own version note, so the two cannot disagree — the
-build fails rather than produce a mislabelled file.
+The masthead version is read from each guide's own version note, so the two cannot disagree — the
+build fails rather than produce a mislabelled file — and every in-page link is checked.
 
 ## Start here
 

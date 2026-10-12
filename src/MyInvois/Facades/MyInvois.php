@@ -9,7 +9,9 @@ use Peoplelogy\XeroBridge\MyInvois\MyInvoisClient;
 
 /**
  * @method static bool validate(string $tin, \Peoplelogy\XeroBridge\MyInvois\IdType|string $idType, string $idValue)
+ * @method static MyInvoisClient for(\Illuminate\Database\Eloquent\Model $owner)
  * @method static array|null lastRateLimit()
+ * @method static string|null lastCorrelationId()
  * @method static void forgetToken()
  *
  * @see MyInvoisClient

@@ -1,97 +1,115 @@
 <?php
 
 /*
- * Builds docs/xero-bridge-usage.html from the markdown source, for circulation
- * to people who will not clone this repository.
+ * Builds an .html beside every .md usage guide in this folder (xero-usage,
+ * invoice-usage, myinvois-usage), for circulation to people who will not clone
+ * this repository.
  *
  * Paths are relative to this file, so it runs from anywhere:
  *
- *     php docs/build-xero-bridge-usage.php
+ *     php docs/usage_docs/build-usage-docs.php
  *
- * The PDF is produced separately by headless Chrome from the HTML:
+ * The PDFs are produced separately by headless Chrome from the HTML, one per
+ * guide:
  *
  *     chrome --headless --no-pdf-header-footer \
- *       --print-to-pdf=docs/xero-bridge-usage.pdf \
- *       file://<abs path>/docs/xero-bridge-usage.html
+ *       --print-to-pdf=docs/usage_docs/xero-usage.pdf \
+ *       file://<abs path>/docs/usage_docs/xero-usage.html
  *
  * Chrome writes the file and then hangs, so background it and verify with
  * `pdfinfo` rather than waiting for it to exit.
  */
 
-require __DIR__.'/../vendor/autoload.php';
+require __DIR__.'/../../vendor/autoload.php';
 
 use League\CommonMark\GithubFlavoredMarkdownConverter;
 
-$root = __DIR__;
-$src = $root.'/xero-bridge-usage.md';
-$out = $root.'/xero-bridge-usage.html';
+$sources = glob(__DIR__.'/*.md') ?: [];
 
-$markdown = file_get_contents($src);
-
-/*
- * The masthead version is READ FROM the document rather than hardcoded here.
- * It was hardcoded once, and the header went on claiming v1.0.3 long after the
- * body had moved on. The two must not be able to disagree.
- */
-if (! preg_match('/Written against `peoplelogy\/laravel-xero-bridge` (v[0-9]+\.[0-9]+\.[0-9]+)/', $markdown, $versionMatch)) {
-    fwrite(STDERR, "No version note found in the markdown; refusing to build a mislabelled document.\n");
+if ($sources === []) {
+    fwrite(STDERR, "No usage guides (*.md) found next to this script.\n");
     exit(1);
 }
 
-$version = $versionMatch[1];
+$failed = false;
 
-/* ------------------------------------------------------------------ */
-/* markdown -> html */
-/* ------------------------------------------------------------------ */
+foreach ($sources as $src) {
+    $failed = ! buildGuide($src, preg_replace('/\.md$/', '.html', $src)) || $failed;
+}
 
-$converter = new GithubFlavoredMarkdownConverter([
-    'html_input' => 'allow',
-    'allow_unsafe_links' => false,
-]);
+exit($failed ? 1 : 0);
 
-$body = (string) $converter->convert($markdown);
+function buildGuide(string $src, string $out): bool
+{
+    $markdown = file_get_contents($src);
 
-/*
- * GFM does not emit heading ids, so the in-page Contents links would all be
- * dead. Reproduce GitHub's own slug rule: lowercase, drop anything that is
- * not alphanumeric / space / hyphen (which removes em dashes, backticks and
- * full stops), then spaces to hyphens. "Flow 2.1 — create a DRAFT invoice"
- * becomes "flow-21--create-a-draft-invoice", matching the anchors already
- * written in the document.
- */
-$slugCounts = [];
+    /*
+     * The masthead version is READ FROM the document rather than hardcoded here.
+     * It was hardcoded once, and the header went on claiming v1.0.3 long after the
+     * body had moved on. The two must not be able to disagree.
+     */
+    if (! preg_match('/Written against `peoplelogy\/laravel-xero-bridge` (v[0-9]+\.[0-9]+\.[0-9]+)/', $markdown, $versionMatch)) {
+        fwrite(STDERR, basename($src).": no version note found; refusing to build a mislabelled document.\n");
 
-$body = preg_replace_callback(
-    '/<h([23])>(.*?)<\/h\1>/s',
-    function (array $m) use (&$slugCounts): string {
-        $text = html_entity_decode(strip_tags($m[2]), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        return false;
+    }
 
-        $slug = mb_strtolower(trim($text));
-        $slug = preg_replace('/[^a-z0-9 \-]/u', '', $slug);
-        $slug = str_replace(' ', '-', (string) $slug);
+    $version = $versionMatch[1];
 
-        // GitHub appends -1, -2 … to a repeated heading.
-        if (isset($slugCounts[$slug])) {
-            $slug .= '-'.$slugCounts[$slug]++;
-        } else {
-            $slugCounts[$slug] = 1;
-        }
+    /* ------------------------------------------------------------------ */
+    /* markdown -> html */
+    /* ------------------------------------------------------------------ */
 
-        return sprintf('<h%1$s id="%2$s">%3$s</h%1$s>', $m[1], $slug, $m[2]);
-    },
-    $body
-);
+    $converter = new GithubFlavoredMarkdownConverter([
+        'html_input' => 'allow',
+        'allow_unsafe_links' => false,
+    ]);
 
-/* Pull the title out of the H1 so the shell can use it. */
-$title = 'Using peoplelogy/laravel-xero-bridge';
+    $body = (string) $converter->convert($markdown);
 
-/* ------------------------------------------------------------------ */
-/* the shell */
-/* ------------------------------------------------------------------ */
+    /*
+     * GFM does not emit heading ids, so the in-page Contents links would all be
+     * dead. Reproduce GitHub's own slug rule: lowercase, drop anything that is
+     * not alphanumeric / space / hyphen (which removes em dashes, backticks and
+     * full stops), then spaces to hyphens. "Flow 2.1 — create a DRAFT invoice"
+     * becomes "flow-21--create-a-draft-invoice", matching the anchors already
+     * written in the document.
+     */
+    $slugCounts = [];
 
-$generated = date('j F Y');
+    $body = preg_replace_callback(
+        '/<h([23])>(.*?)<\/h\1>/s',
+        function (array $m) use (&$slugCounts): string {
+            $text = html_entity_decode(strip_tags($m[2]), ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
-$css = <<<'CSS'
+            $slug = mb_strtolower(trim($text));
+            $slug = preg_replace('/[^a-z0-9 \-]/u', '', $slug);
+            $slug = str_replace(' ', '-', (string) $slug);
+
+            // GitHub appends -1, -2 … to a repeated heading.
+            if (isset($slugCounts[$slug])) {
+                $slug .= '-'.$slugCounts[$slug]++;
+            } else {
+                $slugCounts[$slug] = 1;
+            }
+
+            return sprintf('<h%1$s id="%2$s">%3$s</h%1$s>', $m[1], $slug, $m[2]);
+        },
+        $body
+    );
+
+    /* Pull the title out of the H1 so the shell can use it. */
+    $title = preg_match('/^# (.+)$/m', $markdown, $h1)
+        ? htmlspecialchars(str_replace('`', '', trim($h1[1])), ENT_QUOTES)
+        : 'Using peoplelogy/laravel-xero-bridge';
+
+    /* ------------------------------------------------------------------ */
+    /* the shell */
+    /* ------------------------------------------------------------------ */
+
+    $generated = date('j F Y');
+
+    $css = <<<'CSS'
 :root {
     --ink: #1b1f24;
     --muted: #5b6672;
@@ -300,7 +318,7 @@ blockquote h3 {
 }
 CSS;
 
-$html = <<<HTML
+    $html = <<<HTML
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -323,17 +341,20 @@ $html = <<<HTML
 </html>
 HTML;
 
-file_put_contents($out, $html);
+    file_put_contents($out, $html);
 
-echo "wrote {$out}  (".number_format(strlen($html))." bytes)\n";
+    echo "wrote {$out}  (".number_format(strlen($html))." bytes)\n";
 
-/* A quick integrity check: every in-page anchor must have a target. */
-preg_match_all('/href="#([^"]+)"/', $html, $links);
-preg_match_all('/ id="([^"]+)"/', $html, $ids);
+    /* A quick integrity check: every in-page anchor must have a target. */
+    preg_match_all('/href="#([^"]+)"/', $html, $links);
+    preg_match_all('/ id="([^"]+)"/', $html, $ids);
 
-$missing = array_diff(array_unique($links[1]), $ids[1]);
+    $missing = array_diff(array_unique($links[1]), $ids[1]);
 
-echo 'anchors: '.count(array_unique($links[1])).' links, '.count($ids[1])." targets\n";
-echo $missing === []
-    ? "all in-page links resolve\n"
-    : 'BROKEN LINKS: '.implode(', ', $missing)."\n";
+    echo 'anchors: '.count(array_unique($links[1])).' links, '.count($ids[1])." targets\n";
+    echo $missing === []
+        ? "all in-page links resolve\n"
+        : 'BROKEN LINKS: '.implode(', ', $missing)."\n";
+
+    return $missing === [];
+}

@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Using peoplelogy/laravel-xero-bridge — MyInvois TIN validation</title>
+<style>
+:root {
+    --ink: #1b1f24;
+    --muted: #5b6672;
+    --faint: #8a939e;
+    --rule: #e3e7ec;
+    --accent: #0b6e8f;
+    --accent-soft: #f0f8fb;
+    --code-bg: #f6f8fa;
+    --code-ink: #1b1f24;
+    --warn-bg: #fff8e6;
+    --warn-rule: #e0b44a;
+    --page: #ffffff;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+    margin: 0;
+    background: #eef1f4;
+    color: var(--ink);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.sheet {
+    max-width: 860px;
+    margin: 32px auto 64px;
+    padding: 56px 64px 72px;
+    background: var(--page);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+}
+
+/* ---------- type ---------- */
+
+h1, h2, h3, h4 { line-height: 1.25; font-weight: 650; }
+
+h1 {
+    margin: 0 0 6px;
+    font-size: 30px;
+    letter-spacing: -0.015em;
+}
+
+h2 {
+    margin: 44px 0 14px;
+    padding-bottom: 8px;
+    font-size: 21px;
+    border-bottom: 2px solid var(--rule);
+    letter-spacing: -0.01em;
+}
+
+h3 {
+    margin: 30px 0 10px;
+    font-size: 16.5px;
+    color: var(--accent);
+}
+
+p { margin: 0 0 14px; }
+
+a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(11,110,143,.28); }
+a:hover { border-bottom-color: var(--accent); }
+
+ul, ol { margin: 0 0 14px; padding-left: 24px; }
+li { margin-bottom: 6px; }
+li > ul, li > ol { margin-top: 6px; }
+
+strong { font-weight: 650; }
+
+hr { border: 0; border-top: 1px solid var(--rule); margin: 36px 0; }
+
+/* ---------- the masthead ---------- */
+
+.masthead {
+    margin-bottom: 30px;
+    padding-bottom: 20px;
+    border-bottom: 3px solid var(--ink);
+}
+.masthead .kicker {
+    font-size: 11px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 10px;
+}
+.masthead .meta {
+    margin-top: 10px;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+/* ---------- code ---------- */
+
+code, pre, kbd {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+:not(pre) > code {
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: .875em;
+    white-space: nowrap;
+}
+
+pre {
+    background: var(--code-bg);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    border-radius: 5px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    margin: 0 0 16px;
+    font-size: 13px;
+    line-height: 1.55;
+}
+pre code {
+    background: none;
+    border: 0;
+    padding: 0;
+    font-size: inherit;
+    white-space: pre;
+    color: var(--code-ink);
+}
+
+/* ---------- tables ---------- */
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 18px;
+    font-size: 14px;
+}
+th, td {
+    text-align: left;
+    vertical-align: top;
+    padding: 8px 11px;
+    border: 1px solid var(--rule);
+}
+th {
+    background: var(--accent-soft);
+    font-weight: 650;
+    color: var(--ink);
+}
+tbody tr:nth-child(even) { background: #fafbfc; }
+td code, th code { white-space: normal; }
+
+/* ---------- blockquote callouts ---------- */
+
+blockquote {
+    margin: 0 0 18px;
+    padding: 14px 18px;
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-rule);
+    border-left: 4px solid var(--warn-rule);
+    border-radius: 5px;
+}
+blockquote > :last-child { margin-bottom: 0; }
+blockquote h3 {
+    margin: 0 0 8px;
+    color: #8a5b00;
+    font-size: 15px;
+}
+
+/* ---------- print ---------- */
+
+@page {
+    size: A4;
+    margin: 16mm 14mm 18mm;
+}
+
+@media print {
+    body { background: #fff; font-size: 10.5pt; line-height: 1.5; }
+
+    .sheet {
+        max-width: none;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+    }
+
+    a { color: var(--ink); border-bottom: 0; }
+
+    /* Deliberately NO css grid anywhere: a grid container will not paginate,
+       and everything past page one silently disappears. */
+
+    h1, h2, h3 { break-after: avoid-page; page-break-after: avoid; }
+    h2 { margin-top: 26px; font-size: 15pt; }
+    h3 { margin-top: 18px; font-size: 11.5pt; }
+
+    pre, blockquote, table { break-inside: avoid-page; page-break-inside: avoid; }
+    tr, li { break-inside: avoid-page; page-break-inside: avoid; }
+
+    pre { font-size: 8.6pt; background: #f6f8fa !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    th { background: var(--accent-soft) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    blockquote { background: var(--warn-bg) !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    tbody tr:nth-child(even) { background: #fafbfc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+    table { font-size: 9pt; }
+    :not(pre) > code { font-size: .86em; background: #f6f8fa !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+    /* A long code line must wrap on paper -- there is no horizontal scroll. */
+    pre code { white-space: pre-wrap; word-break: break-word; }
+}
+</style>
+</head>
+<body>
+<div class="sheet">
+<div class="masthead">
+  <div class="kicker">Developer reference</div>
+  <div class="meta">Generated 12 October 2026 &middot; package version v1.7.1</div>
+</div>
+<h1>Using <code>peoplelogy/laravel-xero-bridge</code> — MyInvois TIN validation</h1>
+<p>A practical reference for checking a Malaysian taxpayer's TIN against LHDN (HASiL) through the
+package's MyInvois module: turning it on, the one call, what its answers mean, what goes wrong, and
+the two optional records it can keep of every check.</p>
+<p>This is one of three usage guides in this folder. <strong>Xero usage</strong> covers the Xero side; <strong>Invoice
+usage</strong> shows where a validated TIN and BRN go on the contact before an invoice is sent.</p>
+<p><strong>If you are not in Malaysia, this guide does not apply to you.</strong> The module ships off. It registers
+no route, needs no configuration, and changes nothing about how the rest of the package behaves.</p>
+<blockquote>
+<p><strong>Version note.</strong> Written against <code>peoplelogy/laravel-xero-bridge</code> v1.7.1. Method signatures are
+read from the package source; the contract is documented in full in <code>08-myinvois-tin-validation</code>
+and <code>09-persistence</code> in the folder above this one, which are the authority wherever the two
+disagree. TINs and registration numbers in the samples are illustrative.</p>
+</blockquote>
+<hr />
+<h2 id="contents">Contents</h2>
+<ol>
+<li><a href="#what-it-does">What it does</a></li>
+<li><a href="#turning-it-on">Turning it on</a></li>
+<li><a href="#validating-a-tin">Validating a TIN</a></li>
+<li><a href="#what-the-answer-means">What the answer means</a></li>
+<li><a href="#errors">Errors</a></li>
+<li><a href="#from-the-test-console">From the test console</a></li>
+<li><a href="#recording-the-checks">Recording the checks</a></li>
+<li><a href="#caching-and-rate-limits">Caching and rate limits</a></li>
+<li><a href="#troubleshooting">Troubleshooting</a></li>
+</ol>
+<hr />
+<h2 id="what-it-does">What it does</h2>
+<p>One LHDN endpoint, <strong>Validate Taxpayer's TIN</strong>, and one boolean back: is this TIN genuinely paired
+with this identifier in HASiL's records?</p>
+<pre><code>GET {host}/api/v1.0/taxpayer/validate/{tin}?idType={idType}&amp;idValue={idValue}
+</code></pre>
+<p>The TIN and BRN it checks are the same two values the Xero side writes onto a contact as <code>TaxNumber</code>
+and <code>CompanyNumber</code>, which is why the module lives in this package. It shares no code with the Xero
+side: it has its own config file (<code>config/myinvois.php</code>), its own namespace
+(<code>Peoplelogy\XeroBridge\MyInvois\</code>) and its own exception.</p>
+<hr />
+<h2 id="turning-it-on">Turning it on</h2>
+<pre><code class="language-bash">MYINVOIS_ENABLED=true
+MYINVOIS_ENVIRONMENT=production       # or sandbox
+MYINVOIS_CLIENT_ID=...
+MYINVOIS_CLIENT_SECRET=...
+</code></pre>
+<p>then <code>php artisan config:clear</code> if your configuration is cached. Publishing the annotated config is
+optional — <code>php artisan vendor:publish --tag=myinvois-config</code> — and a separate tag from the Xero
+config, so republishing one can never overwrite the other.</p>
+<blockquote>
+<h3 id="sandbox-and-production-issue-separate-credentials">Sandbox and production issue SEPARATE credentials</h3>
+<p>The Client ID and secret come from the MyInvois portal, under the taxpayer's ERP registration —
+<code>preprod.myinvois.hasil.gov.my</code> for sandbox, <code>myinvois.hasil.gov.my</code> for production. A Client ID
+from one is <strong>always</strong> rejected by the other with <code>invalid_client</code>. So <code>MYINVOIS_ENVIRONMENT</code> must
+name the portal the credentials came from; changing it without changing the credentials is a
+misconfiguration, not a promotion. Production credentials checked against production are safe to
+use from any environment of yours, local included: validation only reads.</p>
+</blockquote>
+<p>The client refuses to send an obvious placeholder (<code>0</code>, <code>YOUR_CLIENT_ID</code>, <code>changeme</code>…) — LHDN
+<strong>auto-blocks</strong> a Client ID that sends one — and names the key instead.</p>
+<hr />
+<h2 id="validating-a-tin">Validating a TIN</h2>
+<pre><code class="language-php">use Peoplelogy\XeroBridge\MyInvois\Facades\MyInvois;
+use Peoplelogy\XeroBridge\MyInvois\IdType;
+
+$valid = MyInvois::validate('C21264688050', IdType::BRN, '201001040438');
+</code></pre>
+<p>Or inject the client, which suits a service class and a test:</p>
+<pre><code class="language-php">use Peoplelogy\XeroBridge\MyInvois\MyInvoisClient;
+
+public function __construct(private readonly MyInvoisClient $myInvois) {}
+</code></pre>
+<h3 id="parameters">Parameters</h3>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Type</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>$tin</code></td>
+<td><code>string</code></td>
+<td>The taxpayer's TIN. No format check is applied — LHDN publishes none, and TINs carry letter prefixes that vary by taxpayer class.</td>
+</tr>
+<tr>
+<td><code>$idType</code></td>
+<td><code>IdType|string</code></td>
+<td><code>NRIC</code>, <code>PASSPORT</code>, <code>BRN</code> or <code>ARMY</code>, any casing. Anything else throws before a request is made.</td>
+</tr>
+<tr>
+<td><code>$idValue</code></td>
+<td><code>string</code></td>
+<td>The identifier of that type: the 12-digit SSM registration number for <code>BRN</code>, the IC number for <code>NRIC</code>.</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th><code>IdType</code></th>
+<th>What it is</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BRN</code></td>
+<td>Business registration number (SSM) — a company</td>
+</tr>
+<tr>
+<td><code>NRIC</code></td>
+<td>Malaysian identity card number — a person</td>
+</tr>
+<tr>
+<td><code>PASSPORT</code></td>
+<td>Passport number — a person</td>
+</tr>
+<tr>
+<td><code>ARMY</code></td>
+<td>Army number — a person</td>
+</tr>
+</tbody>
+</table>
+<h3 id="naming-the-record-it-is-about">Naming the record it is about</h3>
+<pre><code class="language-php">MyInvois::for($customer)-&gt;validate($tin, IdType::BRN, $brn);
+</code></pre>
+<p><code>for()</code> returns a copy carrying the record, so the optional records below can be found — and erased
+— from your customer later. It changes nothing about the call itself.</p>
+<h3 id="also-available">Also available</h3>
+<pre><code class="language-php">MyInvois::lastCorrelationId();   // LHDN's id for the last call — what their support asks for
+MyInvois::lastRateLimit();       // remaining / limit / reset, as LHDN reported them
+MyInvois::forgetToken();         // drop the cached access token, e.g. after rotating the secret
+</code></pre>
+<hr />
+<h2 id="what-the-answer-means">What the answer means</h2>
+<table>
+<thead>
+<tr>
+<th>Result</th>
+<th>LHDN said</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>true</code></td>
+<td>HTTP 200</td>
+<td>HASiL holds this TIN <strong>paired with</strong> this identifier</td>
+</tr>
+<tr>
+<td><code>false</code></td>
+<td>HTTP 404</td>
+<td>It does not. This is an <strong>answer</strong>, not a failure, so it is not thrown</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><strong>Both values are required, and that is the point.</strong> Since <strong>1 August 2026</strong> LHDN validates the
+TIN and the identifier <em>as a pair</em>. A real TIN with a stale or mistyped BRN answers <code>false</code> exactly
+like a fabricated one — so a <code>false</code> is usually the BRN, not the TIN.</li>
+<li><strong>A match is narrower than it looks.</strong> It proves the pair exists in HASiL's records. It does
+<strong>not</strong> prove the pair belongs to the customer you are invoicing: the endpoint returns no name,
+no address, no body at all. Treat it as &quot;this is a real TIN/ID pair&quot;, never as identity
+verification.</li>
+</ul>
+<hr />
+<h2 id="errors">Errors</h2>
+<p>Everything that is not an answer throws <code>Peoplelogy\XeroBridge\MyInvois\MyInvoisException</code>. It is
+deliberately <strong>not</strong> a <code>XeroBridgeException</code>, so code catching Xero failures cannot swallow an LHDN
+one by accident.</p>
+<pre><code class="language-php">use Peoplelogy\XeroBridge\MyInvois\MyInvoisException;
+
+try {
+    $valid = MyInvois::validate($tin, IdType::BRN, $brn);
+} catch (MyInvoisException $e) {
+    if ($e-&gt;isConfigurationProblem()) {
+        // A person must fix a setting or the portal registration. Do NOT retry.
+    } elseif ($e-&gt;isRetryable()) {
+        // Rate limit or an LHDN outage: back off, $e-&gt;retryAfter() when present.
+    }
+
+    Log::error('MyInvois validation failed', $e-&gt;context());
+}
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>What you get</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Pair exists</td>
+<td><code>true</code></td>
+</tr>
+<tr>
+<td>Pair not found (404)</td>
+<td><code>false</code></td>
+</tr>
+<tr>
+<td>Module off, a setting blank, or a placeholder</td>
+<td>throws, <code>isConfigurationProblem()</code> true, the message names the key</td>
+</tr>
+<tr>
+<td>Credentials rejected (<code>invalid_client</code>)</td>
+<td>throws, <code>isConfigurationProblem()</code> true — usually the wrong <code>MYINVOIS_ENVIRONMENT</code></td>
+</tr>
+<tr>
+<td>Not entitled to the API (403)</td>
+<td>throws, <code>isConfigurationProblem()</code> true — a portal registration matter</td>
+</tr>
+<tr>
+<td>Malformed request (400)</td>
+<td>throws, not retryable</td>
+</tr>
+<tr>
+<td>Rate limited (429)</td>
+<td>throws, <code>isRetryable()</code> true, <code>retryAfter()</code> set</td>
+</tr>
+<tr>
+<td>LHDN down (500/503)</td>
+<td>throws, <code>isRetryable()</code> true</td>
+</tr>
+</tbody>
+</table>
+<p>Accessors carry LHDN's own error envelope: <code>statusCode()</code>, <code>errorCode()</code>, <code>errorMalay()</code>,
+<code>propertyName()</code>, <code>propertyPath()</code>, <code>target()</code>, <code>innerErrors()</code>, <code>retryAfter()</code> and
+<code>correlationId()</code>. <code>context()</code> is everything safe to log — never a token or the secret.</p>
+<hr />
+<h2 id="from-the-test-console">From the test console</h2>
+<p>With the module on, the test console at <code>/xero/console</code> — itself off until
+<code>XERO_CONSOLE_ENABLED=true</code> — shows an <strong>LHDN MyInvois</strong> panel with two actions:</p>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>myinvois.validate</code></td>
+<td>Runs one validation from a TIN, an id type and an id value, and shows the answer, the timing and LHDN's rate-limit headers</td>
+</tr>
+<tr>
+<td><code>myinvois.forget_token</code></td>
+<td>Drops the cached access token</td>
+</tr>
+</tbody>
+</table>
+<p>The panel goes through the same client as your code, so its checks are recorded like any other
+(below). Behind the default <code>web,auth</code> middleware any signed-in user can reach the console; narrow
+<code>XERO_CONSOLE_MIDDLEWARE</code> — for example to <code>web,auth,role:admin|super_admin</code> — wherever you turn it
+on. The grey numbers in its fields are placeholders, not values: type the real ones.</p>
+<hr />
+<h2 id="recording-the-checks">Recording the checks</h2>
+<p>Nothing about a check is stored unless you switch it on. Two records are available, each in a table
+of its own; use either or both.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Verdict record</th>
+<th>Check history</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Switch</td>
+<td><code>MYINVOIS_AUDIT=true</code></td>
+<td><code>MYINVOIS_HISTORY=true</code></td>
+</tr>
+<tr>
+<td>Table</td>
+<td><code>myinvois_validations</code></td>
+<td><code>myinvois_validation_history</code></td>
+</tr>
+<tr>
+<td>Rows</td>
+<td><strong>One per TIN/ID pair</strong> — a re-check updates it (<code>check_count</code>, <code>last_checked_at</code>)</td>
+<td><strong>One per check</strong>, never updated</td>
+</tr>
+<tr>
+<td>Answers kept</td>
+<td>Match and no-match</td>
+<td>Match, no-match <strong>and failures</strong> (credentials refused, rate limit, outage, timeout, a setting left blank)</td>
+</tr>
+<tr>
+<td>Who ran it</td>
+<td>—</td>
+<td>The signed-in user (<code>actor_type</code>, <code>actor_id</code>, <code>actor_guard</code>)</td>
+</tr>
+<tr>
+<td>The numbers</td>
+<td>Never — a keyed hash and the TIN's last four only</td>
+<td><strong>BRN check:</strong> the full TIN and BRN. <strong>NRIC / PASSPORT / ARMY check:</strong> neither, not even the last four</td>
+</tr>
+<tr>
+<td>Kept for</td>
+<td><code>MYINVOIS_AUDIT_RETAIN_DAYS</code>, 400 days after the last check</td>
+<td><code>MYINVOIS_HISTORY_RETAIN_DAYS</code>, 400 days after the check</td>
+</tr>
+</tbody>
+</table>
+<p>Both also keep the id type, the environment, LHDN's correlation id, the rules version, and the
+record named with <code>MyInvois::for()</code>. Both are filed under the same keyed <code>subject_hash</code>, so the two
+tables join.</p>
+<h3 id="switching-them-on">Switching them on</h3>
+<pre><code class="language-bash">php artisan vendor:publish --tag=myinvois-migrations   # adds only what you do not have yet
+php artisan migrate
+</code></pre>
+<pre><code class="language-bash">MYINVOIS_AUDIT=true      # the latest verdict per pair
+MYINVOIS_HISTORY=true    # every check
+</code></pre>
+<pre><code class="language-php">// routes/console.php -- keeps both tables to their retention
+Schedule::command('xero-bridge:prune')-&gt;daily();
+</code></pre>
+<p>A queue worker that started before the migration keeps believing the table is missing until it
+restarts: run <code>php artisan queue:restart</code> after migrating.</p>
+<h3 id="why-a-persons-numbers-are-never-kept">Why a person's numbers are never kept</h3>
+<p>A company's BRN is public SSM data and is what you match against your own customer record, so a BRN
+check's history row keeps the full TIN and BRN. An NRIC, passport or army number identifies a
+person, and so does that person's TIN — personal data under Malaysia's PDPA — so that row keeps
+neither. It is still written, with its outcome, who ran it and when, and the numbers are replaced
+with <code>[redacted]</code> in any stored error message too, since a connection error quotes the URL that
+carried them. There is no setting to change this.</p>
+<h3 id="reading-them">Reading them</h3>
+<pre><code class="language-php">use Peoplelogy\XeroBridge\MyInvois\IdType;
+use Peoplelogy\XeroBridge\MyInvois\Models\MyInvoisValidation;
+use Peoplelogy\XeroBridge\MyInvois\Models\MyInvoisValidationHistory;
+use Peoplelogy\XeroBridge\MyInvois\MyInvoisHistory;
+
+// Every check of one pair, newest first -- by the keyed hash, so a person's checks are found too.
+$hash = app(MyInvoisHistory::class)-&gt;subjectHash($tin, IdType::NRIC, $nric);
+MyInvoisValidationHistory::forSubject($hash)-&gt;latest('id')-&gt;get();
+
+// Everything checked for one of your customers.
+MyInvoisValidationHistory::forOwner($customer-&gt;getMorphClass(), (string) $customer-&gt;getKey())-&gt;get();
+
+// What failed today.
+MyInvoisValidationHistory::failed()-&gt;whereDate('created_at', today())-&gt;get();
+
+// The latest verdict for a customer.
+MyInvoisValidation::forOwner($customer-&gt;getMorphClass(), (string) $customer-&gt;getKey())-&gt;first();
+</code></pre>
+<p><code>matched()</code> and <code>unmatched()</code> scopes exist on the history too. A verdict recorded under older LHDN
+rules can be spotted with <code>$verdict-&gt;isStale(MyInvoisAudit::CURRENT_RULES_VERSION)</code>.</p>
+<h3 id="erasure">Erasure</h3>
+<pre><code class="language-php">use Peoplelogy\XeroBridge\MyInvois\MyInvoisAudit;
+use Peoplelogy\XeroBridge\MyInvois\MyInvoisHistory;
+
+// From the customer model's deleting event:
+app(MyInvoisAudit::class)-&gt;forgetOwner($customer);
+app(MyInvoisHistory::class)-&gt;forgetOwner($customer);
+
+// When you still hold the numbers:
+app(MyInvoisAudit::class)-&gt;forgetSubject($tin, $idType, $idValue);
+app(MyInvoisHistory::class)-&gt;forgetSubject($tin, $idType, $idValue);
+</code></pre>
+<p>The hash is keyed from your application key, so rotating <code>APP_KEY</code> makes earlier rows unmatchable
+by subject — the next check simply writes new ones.</p>
+<p>Recording never breaks a check: a row that cannot be written is logged as a warning and the answer
+is returned as usual.</p>
+<hr />
+<h2 id="caching-and-rate-limits">Caching and rate limits</h2>
+<table>
+<thead>
+<tr>
+<th>Limit (per Client ID)</th>
+<th>Applies to</th>
+<th>What the package does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>12 per minute</strong></td>
+<td>Token requests</td>
+<td>Caches the access token — mandatory, not an optimisation — for its hour less <code>MYINVOIS_TOKEN_LEEWAY</code> (60 s). Sandbox and production tokens are cached apart.</td>
+</tr>
+<tr>
+<td><strong>60 per minute</strong></td>
+<td>Validations</td>
+<td>Nothing by default. LHDN calls exceeding it &quot;malicious activity&quot;, so a bulk sweep over a customer table needs pacing.</td>
+</tr>
+</tbody>
+</table>
+<p>Validation <strong>results</strong> are not cached unless you choose to:</p>
+<pre><code class="language-bash">MYINVOIS_RESULT_MATCHED_TTL=86400    # keep a &quot;match&quot; for a day
+MYINVOIS_RESULT_UNMATCHED_TTL=300    # keep a &quot;no match&quot; for five minutes, or 0
+</code></pre>
+<p>The two are asymmetric on purpose: a match is a durable fact, a no-match is usually a typo about
+to be corrected. Keep a match short too — a company can be deregistered between your cache write
+and your invoice. Cache keys hash the TIN and identifier, so neither sits in plain text in the
+store. An answer served from the cache is still recorded in the check history, marked <code>from_cache</code>.</p>
+<hr />
+<h2 id="troubleshooting">Troubleshooting</h2>
+<p><strong>&quot;MyInvois refused the credentials (invalid_client).&quot;</strong> The Client ID and secret do not match, or
+— most often — they belong to the other environment. The message names the environment it tried;
+set <code>MYINVOIS_ENVIRONMENT</code> to the portal the credentials came from, run <code>php artisan config:clear</code>
+where config is cached, and try <strong>once</strong>. LHDN can block a Client ID that keeps sending rejected
+credentials, so do not loop on it.</p>
+<p><strong>&quot;MyInvois is disabled.&quot;</strong> <code>MYINVOIS_ENABLED=true</code>, then <code>php artisan config:clear</code>.</p>
+<p><strong>&quot;MyInvois [client_id] is still set to a placeholder.&quot;</strong> Put the real value in. The check is
+local, made before anything is sent, precisely so a placeholder never reaches LHDN.</p>
+<p><strong>HTTP 403.</strong> The credentials are valid but not entitled to the taxpayer validation API — a portal
+registration matter, not a code one. Do not retry it.</p>
+<p><strong>Everything valid returns <code>false</code>.</strong> Almost always the BRN rather than the TIN. Since 1 August
+2026 the pair is validated together, so a stale registration number — or one still in the
+pre-October-2019 short format — fails even with a perfect TIN. Ask the buyer for their current
+12-digit SSM number.</p>
+<p><strong>The verdict or history table stays empty.</strong> Its switch is off (<code>MYINVOIS_AUDIT</code> /
+<code>MYINVOIS_HISTORY</code>), its migration was never published and run, or a queue worker started before
+the migration and needs <code>php artisan queue:restart</code>.</p>
+<p><strong>cURL error 60, &quot;self signed certificate in certificate chain&quot;.</strong> The package offers no
+TLS-verification switch. Point php.ini's <code>curl.cainfo</code> and <code>openssl.cafile</code> at a current
+<code>cacert.pem</code> — usually the whole problem on a stock MAMP, XAMPP or Windows PHP — or, behind a
+TLS-inspecting proxy, add that proxy's root CA to the system trust store.</p>
+
+</div>
+</body>
+</html>

@@ -10,6 +10,25 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-10-12
+
+Documentation only. No code or behaviour change; the upgrade is `composer update
+peoplelogy/laravel-xero-bridge` alone.
+
+### Changed
+
+- **The usage reference moved to `docs/usage_docs/` and is now three guides**, each as `.md`, `.html`
+  and `.pdf`: **Xero usage** (calling the package, connections, contacts, events, commands, error
+  handling), **Invoice usage** (draft, paid, TIN/BRN/CC then send, find, list, the settings that
+  differ per organisation) and a new **MyInvois usage** (turning it on, sandbox vs production
+  credentials, validating, errors, the console panel, the verdict record and check history,
+  caching, troubleshooting). All three are written against v1.7.1; the single
+  `docs/xero-bridge-usage.*` they replace was still written against v1.5.0.
+- The build script is now `docs/usage_docs/build-usage-docs.php` and builds every guide in that
+  folder, checking each one's version note and in-page links.
+- The `MyInvois` facade's docblock now lists `for()` and `lastCorrelationId()`, which it always
+  forwarded, so IDEs and static analysis see them.
+
 ## [1.7.0] - 2026-10-12
 
 A history of MyInvois TIN checks, off by default. A project that does not switch it on sees no change, and
@@ -1286,7 +1305,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.5.0...v1.6.0
