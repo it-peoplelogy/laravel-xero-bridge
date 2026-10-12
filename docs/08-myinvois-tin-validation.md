@@ -10,6 +10,7 @@ identifier in HASiL's records?
 - [What a match does and does not prove](#what-a-match-does-and-does-not-prove)
 - [Errors](#errors)
 - [Caching](#caching)
+- [Check history](#check-history)
 - [The console panel](#the-console-panel)
 - [Every setting](#every-setting)
 - [Troubleshooting](#troubleshooting)
@@ -197,6 +198,84 @@ The validate endpoint allows **60 requests per minute** per Client ID. LHDN desc
 
 ---
 
+## Check history
+
+`MYINVOIS_AUDIT` keeps the **latest** answer per TIN/ID pair. When you need **every** check — who ran it,
+when, and what came back each time — switch on the history instead, or as well:
+
+```bash
+MYINVOIS_HISTORY=true
+```
+
+and publish and run its migration (the same tag as the verdict table — see
+[below](#the-verdict-and-history-tables)). Every call to `validate()` then adds one row, and no row is
+ever updated:
+
+| Outcome | When | Also recorded |
+|---|---|---|
+| `match` | HASiL holds the pair (HTTP 200) | LHDN's correlation id |
+| `no_match` | It does not (HTTP 404) — an answer, not a failure | LHDN's correlation id |
+| `error` | LHDN never answered: credentials refused, a rate limit, an outage, a connection that timed out, a setting left blank | the HTTP status if there was one, LHDN's error code (`invalid_client`…) or the kind of failure (`configuration`, `ConnectionException`), and the message |
+
+Each row also carries the id type, the environment, the rules version, how long the check took, whether
+it was answered from your [result cache](#caching) (`from_cache`), **the signed-in user who ran it**
+(`actor_type`, `actor_id`, `actor_guard` — on the default guard, empty for a queued job or the scheduler),
+and the record you named with `MyInvois::for($customer)` (`owner_type`, `owner_id`). Checks made from the
+[test console](07-test-console.md) are recorded like any other.
+
+A check that never named a pair — a blank TIN or ID number, or an id type LHDN does not accept — is not
+filed: that is a bug in the caller, and the exception says so.
+
+### What a row keeps of the numbers
+
+Fixed by the id type, with no setting to change it:
+
+| Id type | `tin`, `tin_last4`, `id_value` |
+|---|---|
+| `BRN` | the full TIN and BRN — a company's SSM registration is public, and it is what you match against your own customer record |
+| `NRIC`, `PASSPORT`, `ARMY` | **null** — neither the TIN nor the ID number is stored, not even the last four characters, because both identify a person and are personal data under Malaysia's PDPA |
+
+A person's check is still recorded — its outcome, who ran it, when — and filed under the keyed hash, so
+"every check of this person" and erasure work for anyone who holds the numbers (below). Its stored error
+message has the numbers replaced with `[redacted]` too: an HTTP client exception quotes the URL it failed
+on, and that URL holds the TIN in its path and the ID number in its query string.
+
+### Reading it
+
+```php
+use Peoplelogy\XeroBridge\MyInvois\IdType;
+use Peoplelogy\XeroBridge\MyInvois\Models\MyInvoisValidationHistory;
+use Peoplelogy\XeroBridge\MyInvois\MyInvoisHistory;
+
+// Every check of one pair, newest first -- by the keyed hash, so it works for a person's checks too.
+$hash = app(MyInvoisHistory::class)->subjectHash($tin, IdType::BRN, $brn);
+MyInvoisValidationHistory::forSubject($hash)->latest('id')->get();
+
+// Everything checked for one of your records.
+MyInvoisValidationHistory::forOwner($customer->getMorphClass(), (string) $customer->getKey())->get();
+
+// What failed today.
+MyInvoisValidationHistory::failed()->whereDate('created_at', today())->get();
+```
+
+`matched()` and `unmatched()` are there too. Rows are filed under the verdict table's own keyed hash, so
+the two tables join on `subject_hash`.
+
+**Erasure.** `app(MyInvoisHistory::class)->forgetSubject($tin, $idType, $idValue)` and
+`->forgetOwner($customer)` delete a subject's rows, exactly as their `MyInvoisAudit` namesakes do for
+verdicts — call both from the buyer model's `deleting` event.
+
+**Retention.** `MYINVOIS_HISTORY_RETAIN_DAYS` (default `400`), counted from the check itself and enforced
+by `xero-bridge:prune`. It is a record of calls, not a statutory one: the validated e-Invoice is what tax
+law asks you to keep.
+
+Recording never takes down the check it records. If a row cannot be written, the package logs
+`xero-bridge: could not record a MyInvois check in the history.` and the answer is returned as usual;
+with the switch on and the table not yet migrated it records nothing, after one log line naming the
+publish tag.
+
+---
+
 ## The console panel
 
 With the module enabled, the package's [test console](07-test-console.md) at `/xero/console` — itself
@@ -235,7 +314,10 @@ exists. A consumer outside Malaysia sees the console exactly as it was.
 | `MYINVOIS_AUDIT` | `false` | Keeps a durable record of what LHDN answered, one row per pair checked, in a table of its own — see [MyInvois verdicts](09-persistence.md#myinvois-verdicts) |
 | `MYINVOIS_AUDIT_TABLE` | `myinvois_validations` | A bare name: the connection adds its own prefix. Set it **before** the first migrate if the name is taken (below) |
 | `MYINVOIS_AUDIT_RETAIN_DAYS` | `400` | Days a verdict is kept after it was last checked; `xero-bridge:prune` enforces it |
-| `MYINVOIS_DB_CONNECTION` | default connection | The database connection the verdict table lives on |
+| `MYINVOIS_HISTORY` | `false` | Records every check, one row each — see [Check history](#check-history) |
+| `MYINVOIS_HISTORY_TABLE` | `myinvois_validation_history` | A bare name, as above |
+| `MYINVOIS_HISTORY_RETAIN_DAYS` | `400` | Days a check is kept; `xero-bridge:prune` enforces it |
+| `MYINVOIS_DB_CONNECTION` | default connection | The database connection the verdict and history tables live on |
 
 > **Upgrading.** There is nothing to re-publish. On every boot that is not running from a cached config,
 > the package adds any setting your published `config/myinvois.php` lacks, at any depth, with the
@@ -246,27 +328,34 @@ exists. A consumer outside Malaysia sees the console exactly as it was.
 > cache built before the update, run `php artisan config:clear` (or `config:cache`) before a new setting
 > takes effect. See [Updating](../README.md#your-published-config-is-never-updated).
 
-### The verdict table
+### The verdict and history tables
 
-`MYINVOIS_AUDIT=true` needs its table, which has a publish tag of its own, so the Xero migrations never
-bring a Malaysian tax table into a database that has no use for one:
+`MYINVOIS_AUDIT=true` and `MYINVOIS_HISTORY=true` each need a table. Both migrations share a publish tag
+of their own, so the Xero migrations never bring a Malaysian tax table into a database that has no use for
+one:
 
 ```bash
 php artisan vendor:publish --tag=myinvois-migrations
 php artisan migrate
 ```
 
-If a table called `myinvois_validations` already exists on that connection — counting the connection's
-prefix — set `MYINVOIS_AUDIT_TABLE` to an unused, bare name **before** you migrate, in every environment:
+Publishing the tag again after an upgrade adds only the migration you do not have yet: a copy already
+published keeps its filename. Each migration creates its table whether or not its switch is on, and an
+unused table costs nothing.
+
+If a table called `myinvois_validations` (or `myinvois_validation_history`) already exists on that
+connection — counting the connection's prefix — set `MYINVOIS_AUDIT_TABLE` (or `MYINVOIS_HISTORY_TABLE`)
+to an unused, bare name **before** you migrate, in every environment:
 the package reads it at runtime too, not only when migrating. The migration will not adopt a same-named
 table it did not create. It checks for the columns it would have made and, when they are missing, stops
 before changing anything, naming the table, the columns it lacks and this setting. Laravel does not record
 it as run, so the next `migrate` resumes there once the name is free. A rollback likewise never drops a
 table this migration did not create.
 
-That check is in the migration as published from 1.5.0 on. A copy published earlier and not yet run lacks
-it; republish it first with `php artisan vendor:publish --tag=myinvois-migrations --force`, which rewrites
-it in place under the same filename.
+That check is in the verdict migration as published from 1.5.0 on. A copy published earlier and not yet
+run lacks it; republish it first with `php artisan vendor:publish --tag=myinvois-migrations --existing`,
+which rewrites it in place under the same filename. (`--force` would do that too, but it also publishes
+every migration in the tag you never published.)
 
 ---
 
@@ -294,9 +383,10 @@ them confirm HASiL holds it.
 **`migrate` stops at the MyInvois migration, saying the table "already exists, but it is not the table
 this migration creates".** Your database already has a table by that name, and the package did not
 create it. Nothing was changed. To keep that table, give the package another: set `MYINVOIS_AUDIT_TABLE`
-to an unused, bare name — the connection adds its own prefix — run `php artisan config:clear` if your
-config is cached, and migrate again. If the table is a leftover nothing uses, drop or rename it instead.
-See [The verdict table](#the-verdict-table).
+(`MYINVOIS_HISTORY_TABLE` for the history migration) to an unused, bare name — the connection adds its own
+prefix — run `php artisan config:clear` if your config is cached, and migrate again. If the table is a
+leftover nothing uses, drop or rename it instead. See
+[The verdict and history tables](#the-verdict-and-history-tables).
 
 **cURL error 60, "self signed certificate in certificate chain".** This package offers no
 TLS-verification switch and will not add one: turning verification off in a statutory tax integration

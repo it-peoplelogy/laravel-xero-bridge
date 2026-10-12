@@ -11,6 +11,7 @@ use Peoplelogy\XeroBridge\Models\XeroApiCall;
 use Peoplelogy\XeroBridge\Models\XeroWebhookEvent;
 use Peoplelogy\XeroBridge\Models\XeroWriteRecord;
 use Peoplelogy\XeroBridge\MyInvois\Models\MyInvoisValidation;
+use Peoplelogy\XeroBridge\MyInvois\Models\MyInvoisValidationHistory;
 use Peoplelogy\XeroBridge\Support\Diagnostics;
 use Symfony\Component\Console\Output\OutputInterface;
 use Throwable;
@@ -84,6 +85,17 @@ class PruneCommand extends Command
             $dryRun,
             ['subject_hash', 'tin_last4', 'last_checked_at'],
             'MYINVOIS_AUDIT_TABLE',
+        );
+
+        $this->prune(
+            'MyInvois check history',
+            config('myinvois.database.connection'),
+            (string) config('myinvois.history.table', 'myinvois_validation_history'),
+            'myinvois-migrations',
+            new MyInvoisValidationHistory,
+            $dryRun,
+            ['subject_hash', 'outcome', 'actor_guard', 'created_at'],
+            'MYINVOIS_HISTORY_TABLE',
         );
 
         return $ledger ? $this->reportStuckClaims() : self::SUCCESS;

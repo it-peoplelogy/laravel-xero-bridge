@@ -191,6 +191,46 @@ return [
         'retain_days' => (int) env('MYINVOIS_AUDIT_RETAIN_DAYS', 400),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Check history
+    |--------------------------------------------------------------------------
+    |
+    | One row per validation ATTEMPT, never updated: what was checked, by whom,
+    | when, and what came back -- a match, a no-match, or the failure that kept
+    | LHDN from answering (credentials refused, a rate limit, an outage, a
+    | setting left blank). The verdict record above keeps only the LATEST answer
+    | per TIN/ID pair; this keeps every one.
+    |
+    | WHAT A ROW KEEPS OF THE NUMBERS is fixed by the id type, not a setting:
+    | a BRN check keeps the full TIN and BRN -- a company's public SSM
+    | registration -- while an NRIC, PASSPORT or ARMY check keeps neither the
+    | TIN nor the ID number, not even the last four characters, because both
+    | identify a person and are personal data under the PDPA. That row is still
+    | written, with its outcome, user and time.
+    |
+    | Every row carries the verdict record's keyed subject hash, so "every check
+    | of this pair" and erasure work without the numbers, plus the signed-in
+    | user who ran the check and the record named with MyInvois::for($model).
+    |
+    | OFF by default, and it needs its table published and migrated
+    | (--tag=myinvois-migrations).
+    |
+    */
+
+    'history' => [
+        'enabled' => (bool) env('MYINVOIS_HISTORY', false),
+
+        'table' => env('MYINVOIS_HISTORY_TABLE', 'myinvois_validation_history'),
+
+        /*
+        | Days a row is kept, counted from the check itself. Enforced by
+        | xero-bridge:prune. History is a record of calls, not a statutory one:
+        | the validated e-Invoice is what tax law asks you to keep.
+        */
+        'retain_days' => (int) env('MYINVOIS_HISTORY_RETAIN_DAYS', 400),
+    ],
+
     'database' => [
         'connection' => env('MYINVOIS_DB_CONNECTION'),   // null => default connection
     ],

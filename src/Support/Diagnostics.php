@@ -132,6 +132,7 @@ final class Diagnostics
         'create_xero_write_records_table' => 'xero-bridge.writes.table',
         'create_xero_api_calls_table' => 'xero-bridge.capture.table',
         'create_myinvois_validations_table' => 'myinvois.audit.table',
+        'create_myinvois_validation_history_table' => 'myinvois.history.table',
     ];
 
     public function __construct(

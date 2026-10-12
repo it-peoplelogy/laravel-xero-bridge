@@ -2,7 +2,10 @@
 
 declare(strict_types=1);
 
+use Illuminate\Auth\GenericUser;
 use Illuminate\Support\Facades\Http;
+use Peoplelogy\XeroBridge\MyInvois\Models\MyInvoisValidationHistory;
+use Peoplelogy\XeroBridge\Support\TableGuard;
 
 /**
  * The MyInvois panel in the test console.
@@ -200,4 +203,27 @@ it('never renders or returns the client secret', function () {
 
     expect($body)->not->toContain('test-myinvois-client-secret')
         ->not->toContain('tok');
+});
+
+it('files a console check in the history, with the user who ran it', function () {
+    // The console goes through the same client as application code, so a
+    // host that switches the history on gets the console's checks in it too.
+    enableMyInvois();
+    config()->set('myinvois.history.enabled', true);
+    app(TableGuard::class)->flush();
+    fakePanelMyInvois(200);
+
+    $this->actingAs(new GenericUser(['id' => 7]))
+        ->postJson('/xero/console/run', [
+            'action' => 'myinvois.validate',
+            'params' => ['tin' => 'C25845632020', 'id_type' => 'BRN', 'id_value' => '201901234567'],
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.matched', true);
+
+    $row = MyInvoisValidationHistory::sole();
+
+    expect($row->outcome)->toBe('match')
+        ->and($row->actor_id)->toBe('7')
+        ->and($row->tin)->toBe('C25845632020');
 });

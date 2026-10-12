@@ -34,10 +34,13 @@ class InstallCommand extends Command
     private const ANYONE = ['web'];
 
     /**
-     * The one package migration this command does not publish: MyInvois's
-     * goes out under a tag of its own, myinvois-migrations.
+     * The package migrations this command does not publish: MyInvois's go out
+     * under a tag of their own, myinvois-migrations.
      */
-    private const MYINVOIS_MIGRATION = 'create_myinvois_validations_table';
+    private const MYINVOIS_MIGRATIONS = [
+        'create_myinvois_validations_table',
+        'create_myinvois_validation_history_table',
+    ];
 
     public function handle(XeroConfig $config): int
     {
@@ -49,7 +52,7 @@ class InstallCommand extends Command
         // one of them is shadowed.
         $shadowed = Diagnostics::shadowedMigrations();
         $withheld = $this->option('force')
-            && array_diff(array_keys($shadowed), [self::MYINVOIS_MIGRATION]) !== [];
+            && array_diff(array_keys($shadowed), self::MYINVOIS_MIGRATIONS) !== [];
 
         $this->callSilently('vendor:publish', array_filter([
             '--tag' => 'xero-bridge-config',
@@ -114,7 +117,7 @@ class InstallCommand extends Command
      */
     private function shadowedMigration(string $migration, string $file, bool $forceWithheld): void
     {
-        $tag = $migration === self::MYINVOIS_MIGRATION ? 'myinvois-migrations' : 'xero-bridge-migrations';
+        $tag = in_array($migration, self::MYINVOIS_MIGRATIONS, true) ? 'myinvois-migrations' : 'xero-bridge-migrations';
 
         $this->components->warn(sprintf(
             'database/migrations/%s is a migration of your own with the name of the package\'s %s migration, so '

@@ -1,6 +1,6 @@
 # 9. Persistence
 
-Three optional tables, all **off by default**, that record what the package did.
+Four optional tables, all **off by default**, that record what the package did.
 
 - [Why the package owns these](#why-the-package-owns-these)
 - [Turning them on](#turning-them-on)
@@ -8,6 +8,7 @@ Three optional tables, all **off by default**, that record what the package did.
   - [When the ledger itself fails](#when-the-ledger-itself-fails)
 - [Webhook replay dedupe](#webhook-replay-dedupe)
 - [MyInvois verdicts](#myinvois-verdicts)
+- [MyInvois check history](#myinvois-check-history)
 - [Pruning](#pruning)
 - [Upgrading](#upgrading)
 
@@ -36,7 +37,7 @@ None of it works without a table. All of it is the same table for every consumer
 
 ```bash
 php artisan vendor:publish --tag=xero-bridge-migrations   # the Xero tables
-php artisan vendor:publish --tag=myinvois-migrations      # the MyInvois table
+php artisan vendor:publish --tag=myinvois-migrations      # the MyInvois tables
 php artisan migrate
 ```
 
@@ -49,7 +50,8 @@ Then switch on only what you want:
 ```bash
 XERO_WRITES_LEDGER=true      # duplicate protection for writes
 XERO_WEBHOOK_DEDUPE=true     # durable replay dedupe
-MYINVOIS_AUDIT=true          # TIN verdict record
+MYINVOIS_AUDIT=true          # TIN verdict record: the latest answer per pair
+MYINVOIS_HISTORY=true        # TIN check history: every attempt, one row each
 ```
 
 **Nothing happens until both.** A flag with no table is a no-op — with one exception, the write ledger
@@ -72,6 +74,7 @@ bare name **before** you migrate:
 | `xero_write_records` | `XERO_WRITES_TABLE` | `xero-bridge.writes.table` |
 | `xero_webhook_events` | `XERO_WEBHOOK_DEDUPE_TABLE` | `xero-bridge.webhooks.dedupe.table` |
 | `myinvois_validations` | `MYINVOIS_AUDIT_TABLE` | `myinvois.audit.table` |
+| `myinvois_validation_history` | `MYINVOIS_HISTORY_TABLE` | `myinvois.history.table` |
 
 The package's models read the same variable at runtime, so set it in every environment, and run
 `php artisan config:clear` first if your configuration is cached. Then leave it: changed after
@@ -350,10 +353,33 @@ and every earlier verdict becomes identifiably stale rather than quietly wrong.
 
 ---
 
+## MyInvois check history
+
+The verdict record keeps one row per TIN/ID pair, so a re-check overwrites what the last one said. With
+`MYINVOIS_HISTORY=true`, every attempt also gets a row of its own, never updated: `match`, `no_match`,
+or `error` when LHDN never answered — credentials refused, a rate limit, an outage, a setting left blank.
+Each row names the signed-in user who ran the check and the record passed to `MyInvois::for()`, and is
+filed under the verdict record's keyed hash, so the two tables join on `subject_hash`.
+
+What a row keeps of the numbers is fixed by the id type: a BRN check keeps the full TIN and BRN, a
+company's public registration; an NRIC, passport or army check keeps neither — not even the last four
+characters — because both identify a person. That row is still written, and found by the keyed hash.
+Erasure mirrors the verdict record:
+
+```php
+app(MyInvoisHistory::class)->forgetOwner($customer);
+app(MyInvoisHistory::class)->forgetSubject($tin, $idType, $id);
+```
+
+The columns, the outcomes and how to read them are in
+[MyInvois: Check history](08-myinvois-tin-validation.md#check-history).
+
+---
+
 ## Pruning
 
 ```bash
-php artisan xero-bridge:prune            # all four tables
+php artisan xero-bridge:prune            # every package table that has a retention
 php artisan xero-bridge:prune --dry-run  # report only
 ```
 
@@ -367,6 +393,7 @@ Schedule::command('xero-bridge:prune')->daily();
 | `xero_webhook_events` | `XERO_WEBHOOK_DEDUPE_RETAIN_DAYS`, default 45 | clamped to a **minimum of 32** |
 | `xero_api_calls` | `XERO_CAPTURE_RETAIN_DAYS`, default 90 | every row — see [API call capture](10-api-capture.md) |
 | `myinvois_validations` | `MYINVOIS_AUDIT_RETAIN_DAYS`, default 400 | since last checked |
+| `myinvois_validation_history` | `MYINVOIS_HISTORY_RETAIN_DAYS`, default 400 | since the check itself |
 
 The webhook clamp is not a suggestion: pruning inside Xero's 31-day replay window would delete
 exactly the rows that make a late replay detectable, which is the only thing that table is for.

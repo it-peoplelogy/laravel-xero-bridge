@@ -133,6 +133,7 @@ it('says nothing about tables that were never migrated', function () {
 it('names each table that was never migrated under -v, with the tag that creates it', function () {
     config()->set('xero-bridge.capture.table', 'absent_calls');
     config()->set('myinvois.audit.table', 'absent_verdicts');
+    config()->set('myinvois.history.table', 'absent_history');
 
     // A verbose output rather than '-v': symfony/console before 7.3.4 -- what
     // the prefer-lowest CI legs install -- answers '-v' by setting
@@ -146,7 +147,8 @@ it('names each table that was never migrated under -v, with the tag that creates
 
     // MyInvois ships under its own tag; the Xero tables under theirs.
     expect($output)->toMatch('/captured API calls \.+ not migrated \(--tag=xero-bridge-migrations\)/')
-        ->toMatch('/MyInvois verdicts \.+ not migrated \(--tag=myinvois-migrations\)/');
+        ->toMatch('/MyInvois verdicts \.+ not migrated \(--tag=myinvois-migrations\)/')
+        ->toMatch('/MyInvois check history \.+ not migrated \(--tag=myinvois-migrations\)/');
 });
 
 it('reports a table it could not check, and carries on', function () {
@@ -199,4 +201,5 @@ it('never prunes a host table that only shares a package table name', function (
     'write ledger' => ['xero_write_records', 'XERO_WRITES_TABLE'],
     'captured API calls' => ['xero_api_calls', 'XERO_CAPTURE_TABLE'],
     'MyInvois verdicts' => ['myinvois_validations', 'MYINVOIS_AUDIT_TABLE'],
+    'MyInvois check history' => ['myinvois_validation_history', 'MYINVOIS_HISTORY_TABLE'],
 ]);

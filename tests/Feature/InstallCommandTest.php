@@ -66,17 +66,17 @@ it('publishes the config and every Xero migration, and says so', function () {
 
         // The tag carries the connections, webhook events, write ledger and
         // API capture stubs -- never only the connections table it was once
-        // labelled as -- and never the MyInvois table, which has a tag of its
-        // own.
+        // labelled as -- and never the MyInvois tables, which have a tag of
+        // their own.
         expect($output)->toContain('Published the migrations')
             ->not->toContain('xero_connections migration')
             ->and(File::exists(config_path('xero-bridge.php')))->toBeTrue()
             ->and(File::glob(database_path('migrations/*_create_xero_*_table.php')))->toHaveCount(4)
-            ->and(File::glob(database_path('migrations/*_create_myinvois_validations_table.php')))->toBe([]);
+            ->and(File::glob(database_path('migrations/*_create_myinvois_*_table.php')))->toBe([]);
     } finally {
         File::delete([config_path('xero-bridge.php'), config_path('myinvois.php')]);
 
-        foreach (['*_create_xero_*_table.php', '*_create_myinvois_validations_table.php'] as $migration) {
+        foreach (['*_create_xero_*_table.php', '*_create_myinvois_*_table.php'] as $migration) {
             File::delete(File::glob(database_path('migrations/'.$migration)) ?: []);
         }
     }
@@ -109,8 +109,9 @@ it('warns that a migration of the host\'s own has a package migration\'s name', 
     'webhook replay' => ['create_xero_webhook_events_table', 'xero-bridge-migrations'],
     'write ledger' => ['create_xero_write_records_table', 'xero-bridge-migrations'],
     'API capture' => ['create_xero_api_calls_table', 'xero-bridge-migrations'],
-    // Published under its own tag, which this command never publishes.
-    'MyInvois' => ['create_myinvois_validations_table', 'myinvois-migrations'],
+    // Published under their own tag, which this command never publishes.
+    'MyInvois verdicts' => ['create_myinvois_validations_table', 'myinvois-migrations'],
+    'MyInvois history' => ['create_myinvois_validation_history_table', 'myinvois-migrations'],
 ]);
 
 it('says nothing about a copy of the package\'s own migration already published', function () {
@@ -142,7 +143,7 @@ it('never lets --force overwrite a migration of the host\'s own with the package
     } finally {
         File::delete([$own, config_path('xero-bridge.php'), config_path('myinvois.php')]);
 
-        foreach (['*_create_xero_*_table.php', '*_create_myinvois_validations_table.php'] as $migration) {
+        foreach (['*_create_xero_*_table.php', '*_create_myinvois_*_table.php'] as $migration) {
             File::delete(File::glob(database_path('migrations/'.$migration)) ?: []);
         }
     }

@@ -21,6 +21,7 @@ use Peoplelogy\XeroBridge\Http\Middleware\EnsureConsoleEnabled;
 use Peoplelogy\XeroBridge\MyInvois\MyInvoisAudit;
 use Peoplelogy\XeroBridge\MyInvois\MyInvoisClient;
 use Peoplelogy\XeroBridge\MyInvois\MyInvoisConfig;
+use Peoplelogy\XeroBridge\MyInvois\MyInvoisHistory;
 use Peoplelogy\XeroBridge\OAuth\AuthorizationUrlBuilder;
 use Peoplelogy\XeroBridge\OAuth\IdentityClient;
 use Peoplelogy\XeroBridge\OAuth\OAuthStateStore;
@@ -219,11 +220,19 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
             $app->make(LoggerInterface::class),
         ));
 
+        $this->app->singleton(MyInvoisHistory::class, fn ($app) => new MyInvoisHistory(
+            $app->make(MyInvoisConfig::class),
+            $app->make(MyInvoisAudit::class),
+            $app->make(TableGuard::class),
+            $app->make(LoggerInterface::class),
+        ));
+
         $this->app->singleton(MyInvoisClient::class, fn ($app) => new MyInvoisClient(
             $app->make(MyInvoisConfig::class),
             $app->make(HttpFactory::class),
             $app->make(CacheFactory::class),
             $app->make(MyInvoisAudit::class),
+            $app->make(MyInvoisHistory::class),
         ));
     }
 
@@ -371,12 +380,20 @@ class XeroBridgeServiceProvider extends PackageServiceProvider
 
             // Its own tag as well, so publishing the Xero migrations never
             // drags a Malaysian tax table into a database that has no use
-            // for one.
+            // for one. generateMigrationName() reuses the name of a copy
+            // already published, so publishing the tag again after an upgrade
+            // adds only the migration that is new.
             $this->publishes(
-                [__DIR__.'/../database/migrations/create_myinvois_validations_table.php.stub' => $this->generateMigrationName(
-                    'create_myinvois_validations_table',
-                    now()->addSecond(),
-                )],
+                [
+                    __DIR__.'/../database/migrations/create_myinvois_validations_table.php.stub' => $this->generateMigrationName(
+                        'create_myinvois_validations_table',
+                        now()->addSecond(),
+                    ),
+                    __DIR__.'/../database/migrations/create_myinvois_validation_history_table.php.stub' => $this->generateMigrationName(
+                        'create_myinvois_validation_history_table',
+                        now()->addSeconds(2),
+                    ),
+                ],
                 'myinvois-migrations',
             );
         }

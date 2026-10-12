@@ -126,7 +126,7 @@ function installCommandOutput(): string
     } finally {
         File::delete([config_path('xero-bridge.php'), config_path('myinvois.php')]);
 
-        foreach (['*_create_xero_*_table.php', '*_create_myinvois_validations_table.php'] as $migration) {
+        foreach (['*_create_xero_*_table.php', '*_create_myinvois_*_table.php'] as $migration) {
             File::delete(File::glob(database_path('migrations/'.$migration)) ?: []);
         }
     }

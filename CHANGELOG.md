@@ -10,6 +10,45 @@ them for the *consumer*: "`Invoices::create()` now returns X instead of Y", not 
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-12
+
+A history of MyInvois TIN checks, off by default. A project that does not switch it on sees no change, and
+the upgrade is `composer update peoplelogy/laravel-xero-bridge` alone.
+
+### Added
+
+- **MyInvois check history: every TIN validation, one row each.** The verdict record
+  (`MYINVOIS_AUDIT`) keeps only the latest answer per TIN/ID pair, so a re-check overwrites the last one.
+  With `MYINVOIS_HISTORY=true`, `MyInvois::validate()` also adds a row per attempt to
+  `myinvois_validation_history`, never updated: `match`, `no_match`, or `error` when LHDN never answered
+  — credentials refused, a rate limit, an outage, a connection that timed out, a setting left blank — with
+  the HTTP status, LHDN's error code and correlation id, the environment, the rules version, the duration,
+  whether the answer came from the result cache, the signed-in user who ran it (`actor_*`) and the record
+  passed to `MyInvois::for()` (`owner_*`). Checks run from the test console are recorded too. The
+  exception a failed check throws is unchanged, and recording never takes down the check it records.
+- **What a history row keeps of the numbers is fixed by the id type.** A BRN check keeps the full TIN and
+  BRN — a company's public SSM registration. An NRIC, PASSPORT or ARMY check keeps neither: `tin`,
+  `tin_last4` and `id_value` are null, and the numbers are replaced with `[redacted]` in the stored error
+  message too, since a client exception quotes the URL holding both. The row itself is still written.
+  There is no setting for this.
+- `MyInvoisValidationHistory` model with `forSubject()`, `forOwner()`, `matched()`, `unmatched()` and
+  `failed()` scopes; rows are filed under the verdict record's keyed `subject_hash`, so the two tables
+  join. `MyInvoisHistory::forgetSubject()` and `forgetOwner()` erase a subject's rows.
+- `MYINVOIS_HISTORY_TABLE` and `MYINVOIS_HISTORY_RETAIN_DAYS` (default 400, counted from the check);
+  `xero-bridge:prune` prunes the table, and never a same-named table of the host's.
+
+To switch it on: `php artisan vendor:publish --tag=myinvois-migrations` (it adds only the migration you
+do not have yet), `php artisan migrate`, then `MYINVOIS_HISTORY=true`.
+
+### Changed
+
+- The README now says that MyInvois stores nothing about a check unless `MYINVOIS_AUDIT` or
+  `MYINVOIS_HISTORY` is switched on. It used to read as if `myinvois_validations` always filled, and its
+  sample `.env` block did not mention `MYINVOIS_AUDIT` at all.
+- docs/08 recommends `vendor:publish --tag=myinvois-migrations --existing`, not `--force`, to refresh a
+  verdict migration published before 1.5.0: with two migrations in the tag, `--force` also publishes one
+  you may not want.
+
 ## [1.6.1] - 2026-10-08
 
 Hardening for projects that do receive webhooks, and corrections to the 1.6.0 notes. A project that
@@ -1247,7 +1286,8 @@ constraint changes, nothing to migrate.
 - Invoice updates refuse line items without `LineItemID`, which Xero would otherwise delete and
   recreate.
 
-[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.6.1...v1.7.0
 [1.6.1]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.6.0...v1.6.1
 [1.6.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/it-peoplelogy/laravel-xero-bridge/compare/v1.4.3...v1.5.0

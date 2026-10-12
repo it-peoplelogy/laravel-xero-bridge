@@ -11,6 +11,7 @@ use Illuminate\Http\Client\Factory as HttpFactory;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Peoplelogy\XeroBridge\Capture\ApiCallRecorder;
+use Peoplelogy\XeroBridge\MyInvois\Models\MyInvoisValidationHistory;
 use Peoplelogy\XeroBridge\Support\Clock;
 use Throwable;
 
@@ -69,6 +70,8 @@ final class MyInvoisClient
         // Nullable and last, so anything constructing this by hand keeps
         // working across the upgrade.
         private readonly ?MyInvoisAudit $audit = null,
+        // The same, one release later.
+        private readonly ?MyInvoisHistory $history = null,
     ) {}
 
     /**
@@ -90,49 +93,88 @@ final class MyInvoisClient
      */
     public function validate(string $tin, IdType|string $idType, string $idValue): bool
     {
-        $this->config->assertUsable();
+        $started = hrtime(true);
 
-        $tin = trim($tin);
-        $idValue = trim($idValue);
-        $type = IdType::coerce($idType);
+        // Set once the attempt is in the history, so a failure AFTER that --
+        // the result cache refusing a write, say -- is not filed a second time.
+        $recorded = false;
 
-        // Nothing is sent for a blank input: it can only ever be a 400, and the
-        // endpoint's budget is 60 requests per minute.
-        if ($tin === '') {
-            throw MyInvoisException::missing('tin', 'the $tin argument');
-        }
+        try {
+            $this->config->assertUsable();
 
-        if ($idValue === '') {
-            throw MyInvoisException::missing('idValue', 'the $idValue argument');
-        }
+            $tin = trim($tin);
+            $idValue = trim($idValue);
+            $type = IdType::coerce($idType);
 
-        $cacheKey = $this->resultCacheKey($tin, $type, $idValue);
-
-        if ($cacheKey !== null) {
-            $cached = $this->cache->store($this->config->resultStore())->get($cacheKey);
-
-            if (is_bool($cached)) {
-                return $cached;
+            // Nothing is sent for a blank input: it can only ever be a 400, and the
+            // endpoint's budget is 60 requests per minute.
+            if ($tin === '') {
+                throw MyInvoisException::missing('tin', 'the $tin argument');
             }
+
+            if ($idValue === '') {
+                throw MyInvoisException::missing('idValue', 'the $idValue argument');
+            }
+
+            $cacheKey = $this->resultCacheKey($tin, $type, $idValue);
+
+            if ($cacheKey !== null) {
+                $cached = $this->cache->store($this->config->resultStore())->get($cacheKey);
+
+                if (is_bool($cached)) {
+                    // An answer all the same, though LHDN was not asked again:
+                    // the history says so rather than leaving a gap.
+                    $this->history?->record(
+                        $tin,
+                        $type,
+                        $idValue,
+                        $cached ? MyInvoisValidationHistory::MATCH : MyInvoisValidationHistory::NO_MATCH,
+                        fromCache: true,
+                        durationMs: $this->elapsedMs($started),
+                        owner: $this->owner,
+                    );
+
+                    return $cached;
+                }
+            }
+
+            $matched = $this->sendValidate($tin, $type, $idValue);
+
+            // Recorded on BOTH verdicts: "not found" is as much an answer as
+            // "found", and an audit that only holds the yeses is not an audit.
+            $this->audit?->record(
+                $tin,
+                $type,
+                $idValue,
+                $matched,
+                $matched ? 200 : 404,
+                $this->lastCorrelationId,
+                $this->owner,
+            );
+
+            $this->history?->record(
+                $tin,
+                $type,
+                $idValue,
+                $matched ? MyInvoisValidationHistory::MATCH : MyInvoisValidationHistory::NO_MATCH,
+                $matched ? 200 : 404,
+                $this->lastCorrelationId,
+                durationMs: $this->elapsedMs($started),
+                owner: $this->owner,
+            );
+
+            $recorded = true;
+
+            $this->rememberResult($cacheKey, $matched);
+
+            return $matched;
+        } catch (Throwable $e) {
+            if (! $recorded) {
+                $this->recordFailure($tin, $idType, $idValue, $e, $started);
+            }
+
+            throw $e;
         }
-
-        $matched = $this->sendValidate($tin, $type, $idValue);
-
-        // Recorded on BOTH verdicts: "not found" is as much an answer as
-        // "found", and an audit that only holds the yeses is not an audit.
-        $this->audit?->record(
-            $tin,
-            $type,
-            $idValue,
-            $matched,
-            $matched ? 200 : 404,
-            $this->lastCorrelationId,
-            $this->owner,
-        );
-
-        $this->rememberResult($cacheKey, $matched);
-
-        return $matched;
     }
 
     /**
@@ -184,6 +226,51 @@ final class MyInvoisClient
     public function forgetToken(): void
     {
         $this->cache->store($this->config->tokenStore())->forget($this->tokenCacheKey());
+    }
+
+    /**
+     * File an attempt LHDN never answered, before the exception goes on to the
+     * caller unchanged.
+     *
+     * Only a check of an actual pair is filed: with the TIN or the ID number
+     * blank, or an id type LHDN does not accept, there was nothing to check --
+     * that is a bug in the caller, reported by the exception, not history.
+     */
+    private function recordFailure(string $tin, IdType|string $idType, string $idValue, Throwable $e, int $started): void
+    {
+        if ($this->history === null) {
+            return;
+        }
+
+        $tin = trim($tin);
+        $idValue = trim($idValue);
+
+        if ($tin === '' || $idValue === '') {
+            return;
+        }
+
+        try {
+            $type = IdType::coerce($idType);
+        } catch (Throwable) {
+            return;
+        }
+
+        $this->history->record(
+            $tin,
+            $type,
+            $idValue,
+            MyInvoisValidationHistory::ERROR,
+            $e instanceof MyInvoisException ? $e->statusCode() : null,
+            $e instanceof MyInvoisException ? $e->correlationId() : null,
+            $e,
+            durationMs: $this->elapsedMs($started),
+            owner: $this->owner,
+        );
+    }
+
+    private function elapsedMs(int $started): int
+    {
+        return (int) round((hrtime(true) - $started) / 1_000_000);
     }
 
     private function sendValidate(string $tin, IdType $type, string $idValue): bool

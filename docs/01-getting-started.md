@@ -172,6 +172,7 @@ clash is resolved. So when a name is already taken, set its variable **before** 
 | `xero_webhook_events` | `XERO_WEBHOOK_DEDUPE_TABLE` |
 | `xero_api_calls` | `XERO_CAPTURE_TABLE` |
 | `myinvois_validations` (MyInvois tag only) | `MYINVOIS_AUDIT_TABLE` |
+| `myinvois_validation_history` (MyInvois tag only) | `MYINVOIS_HISTORY_TABLE` |
 
 The package's models read the same variables at runtime, so set the variable in every environment, and
 run `php artisan config:clear` first if your configuration is cached. A migration published by 1.5.0 or

@@ -25,7 +25,7 @@ use Illuminate\Support\Facades\Schema;
  */
 it('survives being run a second time', function () {
     // The base TestCase has already run every migration once.
-    $tables = ['xero_connections', 'xero_webhook_events', 'xero_write_records', 'xero_api_calls', 'myinvois_validations'];
+    $tables = ['xero_connections', 'xero_webhook_events', 'xero_write_records', 'xero_api_calls', 'myinvois_validations', 'myinvois_validation_history'];
 
     foreach ($tables as $table) {
         expect(Schema::hasTable($table))->toBeTrue("{$table} should exist before the second run");

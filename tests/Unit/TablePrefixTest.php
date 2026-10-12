@@ -80,4 +80,5 @@ it('prefixes every table the package ships, not just the first', function (strin
     'xero_webhook_events',
     'xero_write_records',
     'myinvois_validations',
+    'myinvois_validation_history',
 ]);

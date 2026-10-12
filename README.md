@@ -110,8 +110,10 @@ php artisan migrate
 `xero_webhook_events`, `xero_write_records` and `xero_api_calls` — and prints every `.env` key you need,
 the exact redirect URI to register, the connect URL, whether the test console is on, and your webhook
 URL — or, until `XERO_WEBHOOK_KEY` is set, that webhooks are off and how to turn them on. The optional
-MyInvois module keeps its verdicts in a fifth table, `myinvois_validations`, whose migration has a tag
-of its own that install never publishes: `php artisan vendor:publish --tag=myinvois-migrations`.
+MyInvois module can keep two records of its TIN checks, each off until you switch it on: the latest
+verdict per TIN/ID pair in `myinvois_validations` (`MYINVOIS_AUDIT=true`), and every check, one row each,
+in `myinvois_validation_history` (`MYINVOIS_HISTORY=true`). Their migrations have a tag of their own that
+install never publishes: `php artisan vendor:publish --tag=myinvois-migrations`.
 
 Every table is created under a **bare** name, so whatever prefix your database connection sets is applied
 automatically — on a connection with `'prefix' => 'app_'`, `xero_connections` becomes
@@ -128,6 +130,7 @@ and run `php artisan config:clear` first if your configuration is cached:
 | `xero_write_records` | `XERO_WRITES_TABLE` |
 | `xero_api_calls` | `XERO_CAPTURE_TABLE` |
 | `myinvois_validations` | `MYINVOIS_AUDIT_TABLE` |
+| `myinvois_validation_history` | `MYINVOIS_HISTORY_TABLE` |
 
 A migration refuses a same-named table it did not create, rather than adopting it. It stops before
 changing anything, names the table, the columns it lacks and the variable to set, and is not recorded as
@@ -402,7 +405,7 @@ batch number in brackets:
 
 ```bash
 php artisan migrate:status \
-    | grep -E 'create_(xero_(connections|webhook_events|write_records|api_calls)|myinvois_validations)_table'
+    | grep -E 'create_(xero_(connections|webhook_events|write_records|api_calls)|myinvois_validations?(_history)?)_table'
 
 # one per file listed, with the batch migrate:status showed for it
 php artisan migrate:rollback --batch=3 \
@@ -410,7 +413,8 @@ php artisan migrate:rollback --batch=3 \
 ```
 
 Repeat the rollback for every file listed: up to four Xero migrations, plus
-`create_myinvois_validations_table` if you published that one. Do not leave out `--batch`.
+`create_myinvois_validations_table` and `create_myinvois_validation_history_table` if you published them.
+Do not leave out `--batch`.
 `migrate:rollback` first picks what to undo — your latest batch, unless `--batch` or `--step` says
 otherwise — and `--path` only filters that pick, so without `--batch` nothing is rolled back unless the
 file happens to be in your latest batch. Laravel lists the batch's other migrations as "Migration not
@@ -422,7 +426,8 @@ are not certain each of those tables is the package's, republish them first (see
 [Migrations you have already published](#migrations-you-have-already-published)).
 
 You can drop the tables by hand instead — `xero_connections`, `xero_webhook_events`,
-`xero_write_records`, `xero_api_calls` and `myinvois_validations`, or the names you configured, each with
+`xero_write_records`, `xero_api_calls`, `myinvois_validations` and `myinvois_validation_history`, or the
+names you configured, each with
 your connection's prefix (for example `app_xero_connections`) — and then delete their rows from the
 `migrations` table. The package declares no foreign keys.
 
@@ -439,6 +444,7 @@ rm database/migrations/*_create_xero_webhook_events_table.php
 rm database/migrations/*_create_xero_write_records_table.php
 rm database/migrations/*_create_xero_api_calls_table.php
 rm database/migrations/*_create_myinvois_validations_table.php
+rm database/migrations/*_create_myinvois_validation_history_table.php
 rm -r resources/views/vendor/xero-bridge     # the console view, if you published it
 ```
 
@@ -616,6 +622,14 @@ MYINVOIS_ENVIRONMENT=sandbox
 # From the MyInvois portal, under the taxpayer's ERP registration.
 MYINVOIS_CLIENT_ID=
 MYINVOIS_CLIENT_SECRET=
+# Two optional records of the checks, each needing its table:
+#     php artisan vendor:publish --tag=myinvois-migrations && php artisan migrate
+# The latest verdict per TIN/ID pair, the numbers kept only as a keyed hash.
+MYINVOIS_AUDIT=false
+# Every check, one row each: who ran it, when, match / no match / the failure.
+# A BRN check keeps the full TIN and BRN; an NRIC, passport or army check keeps
+# neither, not even the last four characters.
+MYINVOIS_HISTORY=false
 
 # --- API call capture -------------------------------------------------------
 # Records every Xero and LHDN request and response into xero_api_calls, for
@@ -845,6 +859,17 @@ so republishing one config can never overwrite the other.
 
 With it on, the [test console](docs/07-test-console.md), wherever that is switched on as well, grows a
 panel for running a validation by hand.
+
+Nothing about a check is stored unless you ask. Two records are there to switch on, each in a table
+published with `--tag=myinvois-migrations`:
+
+- `MYINVOIS_AUDIT=true` — the **latest verdict** per TIN/ID pair, in `myinvois_validations`. A re-check
+  updates the row. The TIN and ID number are kept only as a keyed hash.
+- `MYINVOIS_HISTORY=true` — **every check**, one row each, never updated, in
+  `myinvois_validation_history`: match, no match, or the failure that kept LHDN from answering, with the
+  signed-in user who ran it. A BRN check keeps the full TIN and BRN; an NRIC, passport or army check keeps
+  neither, not even the last four characters. See
+  [Check history](docs/08-myinvois-tin-validation.md#check-history).
 
 Full detail, including caching, the error contract and troubleshooting, is in
 [the MyInvois documentation](docs/08-myinvois-tin-validation.md).

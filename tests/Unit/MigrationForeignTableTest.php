@@ -55,6 +55,10 @@ function migrationStubCases(): array
             'create_myinvois_validations_table.php.stub', 'myinvois_validations',
             'MYINVOIS_AUDIT_TABLE', 'myinvois.audit.table',
         ],
+        'myinvois_validation_history' => [
+            'create_myinvois_validation_history_table.php.stub', 'myinvois_validation_history',
+            'MYINVOIS_HISTORY_TABLE', 'myinvois.history.table',
+        ],
     ];
 }
 

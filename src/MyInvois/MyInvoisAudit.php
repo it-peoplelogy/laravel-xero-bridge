@@ -178,8 +178,22 @@ final class MyInvoisAudit
      */
     public function subjectHash(string $tin, IdType $idType, string $idValue): string
     {
+        return $this->keyedHash($this->config->baseUrl(), $tin, $idType, $idValue);
+    }
+
+    /**
+     * The same keyed hash over an explicit scope instead of the current base URL.
+     *
+     * The check history needs it for one case only: an attempt that failed
+     * because MYINVOIS_ENVIRONMENT is unreadable has no base URL to hash under,
+     * and is still worth filing, keyed like every other row.
+     *
+     * @internal
+     */
+    public function keyedHash(string $scope, string $tin, IdType $idType, string $idValue): string
+    {
         $subject = implode('|', [
-            $this->config->baseUrl(),
+            $scope,
             trim($tin),
             $idType->value,
             trim($idValue),
